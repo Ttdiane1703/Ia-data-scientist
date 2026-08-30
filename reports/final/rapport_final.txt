@@ -2,28 +2,27 @@
               RAPPORT FINAL — IA DATA SCIENTIST
 ======================================================================
 
-Dataset initial : 1000 lignes × 14 colonnes
-Dataset nettoyé : 1000 lignes × 14 colonnes
+Dataset initial : 200 lignes × 5 colonnes
+Dataset nettoyé : 200 lignes × 5 colonnes
 
-Cible : Payment_Method
-Type de problème : classification_multiclasse
-Features : 47
+Cible : Unnamed: 0
+Type de problème : regression
+Features : 3
 
 MODELE CHAMPION
 --------------------------------------------------
 Modèle : XGBoost
-Score CV : 0.3769
+Score CV : 79.0825
 
 Paramètres :
-   n_estimators : 350
-   max_depth : 5
-   learning_rate : 0.2105290108585423
-   subsample : 0.7618652782741414
-   colsample_bytree : 0.8393125616864967
+   n_estimators : 250
+   max_depth : 9
+   learning_rate : 0.26919152711343286
+   subsample : 0.6693581826684941
+   colsample_bytree : 0.6360430105797488
 
 EVALUATION
 --------------------------------------------------
-accuracy : 0.3300
-precision : 0.3283
-recall : 0.3300
-f1 : 0.3285
+mae : 64.6303
+rmse : 78.8647
+r2 : -1.3477

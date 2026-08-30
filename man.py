@@ -22,6 +22,28 @@
 #
 # ================================================================
 
+# ================================================================
+# BACKEND MATPLOTLIB
+#
+# IMPORTANT : ceci doit être fait AVANT tout import (direct ou
+# indirect) de matplotlib.pyplot, y compris ceux qui se produisent
+# dans les modules du projet (eda.py, explainability.py, ...).
+#
+# Sans cela, matplotlib peut utiliser le backend graphique Tkinter
+# (TkAgg) sur Windows, ce qui provoque des erreurs inoffensives
+# mais bruyantes à la fermeture du script :
+#
+# RuntimeError: main thread is not in main loop
+#
+# Le backend "Agg" génère les graphiques directement en fichiers
+# image, sans jamais ouvrir de fenêtre — parfait pour un pipeline
+# automatique qui ne fait qu'exporter des PNG.
+# ================================================================
+
+import matplotlib
+
+matplotlib.use("Agg")
+
 import os
 import traceback
 import warnings
@@ -88,6 +110,47 @@ REPORTS_DIR = "reports"
 
 
 # ================================================================
+# SUIVI DE PROGRESSION (POUR L'API WEB)
+#
+# Permet à l'API FastAPI de suivre en direct l'avancement du
+# pipeline (étape 1/15, 2/15, ...) sans modifier le comportement
+# du script en ligne de commande.
+#
+# Utilise contextvars plutôt qu'une variable globale classique :
+# chaque requête/tâche de fond FastAPI a son propre contexte, donc
+# plusieurs analyses lancées en même temps par différents
+# utilisateurs ne se mélangent pas.
+# ================================================================
+
+import contextvars
+
+_job_reporter = contextvars.ContextVar(
+    "job_reporter",
+    default=None
+)
+
+
+def definir_rapporteur_etape(fonction):
+
+    return _job_reporter.set(fonction)
+
+
+def _rapporter_etape(numero, titre):
+
+    rapporteur = _job_reporter.get()
+
+    if rapporteur is not None:
+
+        try:
+
+            rapporteur(numero, titre)
+
+        except Exception:
+
+            pass
+
+
+# ================================================================
 # OUTILS
 # ================================================================
 
@@ -101,6 +164,8 @@ def afficher_titre(numero, titre):
     )
 
     print("=" * 70)
+
+    _rapporter_etape(numero, titre)
 
 
 def afficher_erreur(message, exception):
@@ -181,7 +246,7 @@ def afficher_intro():
 # CREATION DES DOSSIERS
 # ================================================================
 
-def creer_dossiers():
+def creer_dossiers(base_dir="."):
 
     dossiers = [
         "reports",
@@ -191,13 +256,14 @@ def creer_dossiers():
         "reports/predictions",
         "reports/explainability",
         "reports/final",
-        "data/processed"
+        "data/processed",
+        "model"
     ]
 
     for dossier in dossiers:
 
         os.makedirs(
-            dossier,
+            os.path.join(base_dir, dossier),
             exist_ok=True
         )
 
@@ -206,16 +272,22 @@ def creer_dossiers():
 # ETAPE 1 — CHARGEMENT
 # ================================================================
 
-def charger_donnees():
+def charger_donnees(chemin_impose=None):
 
     afficher_titre(
         1,
         "📂 CHARGEMENT DES DONNÉES"
     )
 
-    chemin = input(
-        "Entrez le chemin du fichier CSV : "
-    ).strip()
+    if chemin_impose is not None:
+
+        chemin = str(chemin_impose).strip()
+
+    else:
+
+        chemin = input(
+            "Entrez le chemin du fichier CSV : "
+        ).strip()
 
     if not chemin:
 
@@ -371,9 +443,10 @@ def nettoyer_donnees(df):
 # ETAPE 3bis — EXPORT DU DATASET NETTOYE
 # ================================================================
 
-def exporter_dataset_nettoye(df_clean):
+def exporter_dataset_nettoye(df_clean, base_dir="."):
 
     chemin = os.path.join(
+        base_dir,
         "data",
         "processed",
         "dataset_nettoye.csv"
@@ -625,7 +698,8 @@ def detecter_probleme(df):
 def choisir_cible_manuellement(
     df,
     target_auto=None,
-    problem_type_auto=None
+    problem_type_auto=None,
+    target_impose=None
 ):
 
     afficher_titre(
@@ -635,26 +709,32 @@ def choisir_cible_manuellement(
 
     colonnes = list(df.columns)
 
-    print(
-        "\nColonnes disponibles :"
-    )
+    if target_impose is not None:
 
-    for index, colonne in enumerate(colonnes):
+        reponse = str(target_impose).strip()
 
-        marqueur = (
-            "  (suggestion automatique)"
-            if colonne == target_auto
-            else ""
-        )
+    else:
 
         print(
-            f"   [{index}] {colonne}{marqueur}"
+            "\nColonnes disponibles :"
         )
 
-    reponse = input(
-        "\nEntrez le numéro ou le nom de la colonne à prédire "
-        "(laisser vide pour garder la suggestion automatique) : "
-    ).strip()
+        for index, colonne in enumerate(colonnes):
+
+            marqueur = (
+                "  (suggestion automatique)"
+                if colonne == target_auto
+                else ""
+            )
+
+            print(
+                f"   [{index}] {colonne}{marqueur}"
+            )
+
+        reponse = input(
+            "\nEntrez le numéro ou le nom de la colonne à prédire "
+            "(laisser vide pour garder la suggestion automatique) : "
+        ).strip()
 
     if not reponse:
 
@@ -1624,6 +1704,51 @@ def effectuer_prediction(
 # ETAPE 15 — RAPPORT
 # ================================================================
 
+# ================================================================
+# UTILITAIRE — SECURISATION JSON
+#
+# Certaines bibliothèques (Optuna, numpy, pandas) peuvent renvoyer
+# des types numpy (np.int64, np.float64, ...) au lieu de types
+# Python natifs. Ces types ne sont PAS sérialisables en JSON par
+# défaut (`json.dump` lève TypeError), ce qui casse silencieusement
+# la génération du rapport JSON, l'export des métadonnées, et la
+# réponse de l'API web. Cette fonction convertit récursivement
+# n'importe quelle structure (dict, liste, scalaire) en types
+# JSON-safe.
+# ================================================================
+
+def _rendre_json_safe(valeur):
+
+    if isinstance(valeur, dict):
+
+        return {
+            cle: _rendre_json_safe(v)
+            for cle, v in valeur.items()
+        }
+
+    if isinstance(valeur, (list, tuple)):
+
+        return [_rendre_json_safe(v) for v in valeur]
+
+    if isinstance(valeur, (np.integer,)):
+
+        return int(valeur)
+
+    if isinstance(valeur, (np.floating,)):
+
+        return float(valeur)
+
+    if isinstance(valeur, np.bool_):
+
+        return bool(valeur)
+
+    if isinstance(valeur, np.ndarray):
+
+        return _rendre_json_safe(valeur.tolist())
+
+    return valeur
+
+
 def generer_rapport(
     df_initial,
     df_clean,
@@ -1631,7 +1756,8 @@ def generer_rapport(
     problem_type,
     X_features,
     champion,
-    evaluation
+    evaluation,
+    base_dir="."
 ):
 
     afficher_titre(
@@ -1670,7 +1796,7 @@ def generer_rapport(
 
     if champion is not None:
 
-        rapport["champion"] = {
+        rapport["champion"] = _rendre_json_safe({
             "modele": champion.get(
                 "model"
             ),
@@ -1681,7 +1807,7 @@ def generer_rapport(
                 "params",
                 {}
             )
-        }
+        })
 
     if evaluation:
 
@@ -1702,8 +1828,8 @@ def generer_rapport(
 
     import json
 
-    chemin_json = (
-        "reports/final/rapport_final.json"
+    chemin_json = os.path.join(
+        base_dir, "reports", "final", "rapport_final.json"
     )
 
     try:
@@ -1735,8 +1861,8 @@ def generer_rapport(
     # RAPPORT TXT
     # ------------------------------------------------------------
 
-    chemin_txt = (
-        "reports/final/rapport_final.txt"
+    chemin_txt = os.path.join(
+        base_dir, "reports", "final", "rapport_final.txt"
     )
 
     try:
@@ -2007,8 +2133,16 @@ def generer_rapport_pdf(
     champion,
     evaluation,
     predictions=None,
-    chemin_pdf="reports/final/rapport_final.pdf"
+    label_encoder=None,
+    base_dir=".",
+    chemin_pdf=None
 ):
+
+    if chemin_pdf is None:
+
+        chemin_pdf = os.path.join(
+            base_dir, "reports", "final", "rapport_final.pdf"
+        )
 
     try:
 
@@ -2089,6 +2223,83 @@ def generer_rapport_pdf(
         bulletIndent=4
     )
 
+    style_explication = ParagraphStyle(
+        "Explication",
+        parent=style_corps,
+        fontSize=9.5,
+        textColor=colors.HexColor("#3D3D3D"),
+        leftIndent=8,
+        rightIndent=8,
+        spaceBefore=4,
+        spaceAfter=10,
+        backColor=colors.HexColor("#F7F9FB"),
+        borderPadding=8,
+        borderColor=COULEUR_BORDURE,
+        borderWidth=0.5
+    )
+
+    style_interpretation = ParagraphStyle(
+        "Interpretation",
+        parent=style_corps,
+        fontSize=9.5,
+        textColor=colors.HexColor("#1F3B57"),
+        leftIndent=8,
+        rightIndent=8,
+        spaceBefore=6,
+        spaceAfter=10,
+        backColor=colors.HexColor("#EAF3F8"),
+        borderPadding=8,
+        borderColor=COULEUR_ACCENT,
+        borderWidth=0.75
+    )
+
+    style_sous_section = ParagraphStyle(
+        "SousSection",
+        parent=styles["Heading2"],
+        fontSize=11.5,
+        textColor=COULEUR_ACCENT,
+        spaceBefore=12,
+        spaceAfter=6
+    )
+
+    style_glossaire_terme = ParagraphStyle(
+        "GlossaireTerme",
+        parent=style_corps,
+        fontName="Helvetica-Bold",
+        spaceBefore=6,
+        spaceAfter=0
+    )
+
+    style_cellule_terme = ParagraphStyle(
+        "CelluleTerme",
+        parent=style_corps,
+        fontName="Helvetica-Bold",
+        fontSize=9,
+        spaceAfter=0
+    )
+
+    style_cellule_definition = ParagraphStyle(
+        "CelluleDefinition",
+        parent=style_corps,
+        fontSize=9,
+        leading=12,
+        spaceAfter=0
+    )
+
+    def _explication(texte):
+
+        return Paragraph(
+            f"<i>EN CLAIR — {texte}</i>",
+            style_explication
+        )
+
+    def _interpretation(texte):
+
+        return Paragraph(
+            f"<b>INTERPRÉTATION — </b>{texte}",
+            style_interpretation
+        )
+
     elements = []
 
     # ------------------------------------------------------------
@@ -2157,11 +2368,54 @@ def generer_rapport_pdf(
     elements.append(PageBreak())
 
     # ------------------------------------------------------------
+    # COMMENT LIRE CE RAPPORT
+    # ------------------------------------------------------------
+
+    elements.append(
+        Paragraph("À propos de ce rapport", style_section)
+    )
+
+    elements.append(
+        Paragraph(
+            "Ce document a été généré automatiquement par un pipeline "
+            "d'intelligence artificielle qui a analysé vos données, "
+            "construit un modèle de prédiction, puis évalué sa "
+            "performance. Il est conçu pour être lu aussi bien par un "
+            "profil technique (data scientist) que par un profil "
+            "métier (dirigeant, chef de projet, analyste) : chaque "
+            "section combine un résultat chiffré et une explication "
+            "en langage courant.",
+            style_corps
+        )
+    )
+
+    elements.append(
+        Paragraph(
+            "Les encadrés bleus « Interprétation » donnent une "
+            "lecture pratique des résultats, et les encadrés gris "
+            "« En clair » traduisent les notions techniques en "
+            "termes simples. Un glossaire des termes utilisés se "
+            "trouve à la fin du document.",
+            style_corps
+        )
+    )
+
+    elements.append(Spacer(1, 0.4 * cm))
+
+    # ------------------------------------------------------------
     # RESUME EXECUTIF
     # ------------------------------------------------------------
 
     elements.append(
         Paragraph("Résumé exécutif", style_section)
+    )
+
+    elements.append(
+        Paragraph(
+            "Cette section résume en quelques lignes ce qui a été "
+            "fait et ce qu'il faut en retenir, sans détail technique.",
+            style_corps
+        )
     )
 
     resume_points = []
@@ -2255,7 +2509,45 @@ def generer_rapport_pdf(
 
     elements.append(table_donnees)
 
-    elements.append(Spacer(1, 0.6 * cm))
+    elements.append(
+        _explication(
+            "avant de construire un modèle, l'IA a vérifié et "
+            "corrigé automatiquement les données : valeurs "
+            "manquantes, doublons, formats incohérents ou valeurs "
+            "aberrantes. Si le nombre de lignes/colonnes n'a pas "
+            "changé, cela signifie que les données fournies étaient "
+            "déjà globalement propres."
+        )
+    )
+
+    elements.append(Spacer(1, 0.4 * cm))
+
+    if X_features is not None and hasattr(X_features, "shape"):
+
+        elements.append(
+            Paragraph(
+                f"En complément du nettoyage, l'IA a construit "
+                f"automatiquement {X_features.shape[1]} variables "
+                f"explicatives (« features ») à partir des colonnes "
+                f"d'origine — par exemple en transformant des "
+                f"catégories en indicateurs numériques, ou en créant "
+                f"de nouvelles combinaisons de colonnes utiles à la "
+                f"prédiction.",
+                style_corps
+            )
+        )
+
+        elements.append(
+            _explication(
+                "une « feature » est une information que le modèle "
+                "utilise pour faire sa prédiction (par exemple : "
+                "l'âge, le montant d'un achat, la ville d'un client). "
+                "Plus ces informations sont pertinentes, plus le "
+                "modèle a de chances de bien prédire."
+            )
+        )
+
+    elements.append(Spacer(1, 0.4 * cm))
 
     # ------------------------------------------------------------
     # MODELE CHAMPION
@@ -2263,6 +2555,19 @@ def generer_rapport_pdf(
 
     elements.append(
         Paragraph("Modèle retenu", style_section)
+    )
+
+    elements.append(
+        Paragraph(
+            "L'IA a testé automatiquement plusieurs algorithmes de "
+            "machine learning (Random Forest, XGBoost, LightGBM, "
+            "CatBoost, etc.), chacun avec plusieurs réglages "
+            "différents, puis a conservé celui qui a obtenu le "
+            "meilleur score. Ce processus s'appelle l'« AutoML » "
+            "(apprentissage automatique automatisé) : il évite de "
+            "devoir choisir et régler manuellement un algorithme.",
+            style_corps
+        )
     )
 
     if champion is not None:
@@ -2293,6 +2598,18 @@ def generer_rapport_pdf(
 
         elements.append(table_modele)
 
+        elements.append(
+            _explication(
+                "le « score de validation croisée » mesure la "
+                "performance du modèle sur des données qu'il n'a "
+                "jamais vues pendant son entraînement, en la testant "
+                "plusieurs fois sur des portions différentes du "
+                "dataset. C'est un indicateur plus fiable qu'un test "
+                "unique, car il réduit le risque que le score soit "
+                "dû à la chance."
+            )
+        )
+
         elements.append(Spacer(1, 0.3 * cm))
 
         params = champion.get("params", {})
@@ -2302,6 +2619,19 @@ def generer_rapport_pdf(
             elements.append(
                 Paragraph(
                     "Hyperparamètres optimisés :",
+                    style_sous_section
+                )
+            )
+
+            elements.append(
+                Paragraph(
+                    "Ce sont les réglages internes de l'algorithme "
+                    "(par exemple : le nombre d'arbres de décision "
+                    "construits, ou la vitesse à laquelle le modèle "
+                    "apprend). L'IA les a testés automatiquement "
+                    "par dizaines de combinaisons pour retenir celle "
+                    "qui fonctionne le mieux sur ces données — vous "
+                    "n'avez rien eu à régler manuellement.",
                     style_corps
                 )
             )
@@ -2358,9 +2688,22 @@ def generer_rapport_pdf(
         Paragraph("Évaluation des performances", style_section)
     )
 
+    elements.append(
+        Paragraph(
+            "Une fois le modèle entraîné, l'IA l'a testé sur un "
+            "échantillon de données mis de côté dès le départ (le "
+            "« jeu de test »), que le modèle n'a jamais vu pendant "
+            "son apprentissage. Cela permet de mesurer sa capacité "
+            "réelle à généraliser sur de nouvelles données, et non "
+            "sa capacité à « réciter » les données déjà connues.",
+            style_corps
+        )
+    )
+
     if evaluation:
 
         chemin_graphique = os.path.join(
+            base_dir,
             "reports",
             "final",
             "graphique_metriques.png"
@@ -2421,6 +2764,250 @@ def generer_rapport_pdf(
 
             elements.append(table_eval)
 
+            elements.append(Spacer(1, 0.3 * cm))
+
+            # ------------------------------------------------
+            # EXPLICATION DES METRIQUES SELON LE TYPE DE PROBLEME
+            # ------------------------------------------------
+
+            if problem_type.startswith("classification"):
+
+                elements.append(
+                    Paragraph(
+                        "Que signifient ces métriques ?",
+                        style_sous_section
+                    )
+                )
+
+                lignes_glossaire_metriques = [
+                    [
+                        Paragraph("Accuracy", style_cellule_terme),
+                        Paragraph(
+                            "Le pourcentage de prédictions "
+                            "correctes sur l'ensemble du jeu de "
+                            "test, toutes classes confondues.",
+                            style_cellule_definition
+                        )
+                    ],
+                    [
+                        Paragraph("Precision", style_cellule_terme),
+                        Paragraph(
+                            "Parmi les fois où le modèle a prédit "
+                            "une classe donnée, le pourcentage de "
+                            "fois où c'était réellement la bonne.",
+                            style_cellule_definition
+                        )
+                    ],
+                    [
+                        Paragraph(
+                            "Recall (rappel)", style_cellule_terme
+                        ),
+                        Paragraph(
+                            "Parmi les cas réels d'une classe "
+                            "donnée, le pourcentage que le modèle "
+                            "a réussi à détecter.",
+                            style_cellule_definition
+                        )
+                    ],
+                    [
+                        Paragraph("F1-score", style_cellule_terme),
+                        Paragraph(
+                            "Un équilibre entre precision et "
+                            "recall, utile quand les classes ne "
+                            "sont pas équilibrées.",
+                            style_cellule_definition
+                        )
+                    ],
+                ]
+
+                table_glossaire_metriques = Table(
+                    lignes_glossaire_metriques,
+                    colWidths=[3.5 * cm, 10.5 * cm]
+                )
+
+                table_glossaire_metriques.setStyle(
+                    TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                    ])
+                )
+
+                elements.append(table_glossaire_metriques)
+
+                # --------------------------------------------
+                # INTERPRETATION HONNETE VS BASE ALEATOIRE
+                # --------------------------------------------
+
+                nombre_classes = None
+
+                if label_encoder is not None and hasattr(
+                    label_encoder, "classes_"
+                ):
+
+                    nombre_classes = len(label_encoder.classes_)
+
+                elif predictions is not None:
+
+                    try:
+
+                        nombre_classes = len(
+                            np.unique(predictions)
+                        )
+
+                    except Exception:
+
+                        nombre_classes = None
+
+                accuracy = evaluation.get("accuracy")
+
+                if nombre_classes and accuracy is not None:
+
+                    base_aleatoire = 1 / nombre_classes
+
+                    if accuracy <= base_aleatoire * 1.15:
+
+                        appreciation = (
+                            f"Le modèle obtient une accuracy de "
+                            f"{accuracy:.1%}, à comparer à ce "
+                            f"qu'obtiendrait un modèle qui devine "
+                            f"au hasard parmi {nombre_classes} "
+                            f"classes possibles (environ "
+                            f"{base_aleatoire:.1%}). L'écart étant "
+                            f"faible, <b>le modèle n'a pas encore "
+                            f"appris de signal exploitable</b> dans "
+                            f"les données actuelles. Ce résultat "
+                            f"n'est pas surprenant en soi : il "
+                            f"indique généralement que les colonnes "
+                            f"disponibles n'expliquent pas assez "
+                            f"la variable à prédire, ou qu'il "
+                            f"manque des données pertinentes."
+                        )
+
+                    elif accuracy <= base_aleatoire * 1.5:
+
+                        appreciation = (
+                            f"Le modèle obtient une accuracy de "
+                            f"{accuracy:.1%}, contre environ "
+                            f"{base_aleatoire:.1%} pour un tirage "
+                            f"au hasard parmi {nombre_classes} "
+                            f"classes. Le modèle capte donc un "
+                            f"signal réel, mais <b>encore modeste</b> "
+                            f"— il n'est pas encore assez fiable "
+                            f"pour une utilisation opérationnelle "
+                            f"sans supervision humaine."
+                        )
+
+                    else:
+
+                        appreciation = (
+                            f"Le modèle obtient une accuracy de "
+                            f"{accuracy:.1%}, nettement supérieure "
+                            f"à la base aléatoire d'environ "
+                            f"{base_aleatoire:.1%} pour "
+                            f"{nombre_classes} classes. <b>Le "
+                            f"modèle capte un signal exploitable</b> "
+                            f"dans les données."
+                        )
+
+                    elements.append(
+                        _interpretation(appreciation)
+                    )
+
+            else:
+
+                elements.append(
+                    Paragraph(
+                        "Que signifient ces métriques ?",
+                        style_sous_section
+                    )
+                )
+
+                lignes_glossaire_metriques = [
+                    [
+                        Paragraph("MAE", style_cellule_terme),
+                        Paragraph(
+                            "L'écart moyen, en valeur absolue, "
+                            "entre la valeur prédite et la valeur "
+                            "réelle. Plus il est proche de 0, "
+                            "mieux c'est.",
+                            style_cellule_definition
+                        )
+                    ],
+                    [
+                        Paragraph("RMSE", style_cellule_terme),
+                        Paragraph(
+                            "Similaire au MAE, mais pénalise "
+                            "davantage les grosses erreurs. Utile "
+                            "pour repérer si le modèle se trompe "
+                            "parfois beaucoup.",
+                            style_cellule_definition
+                        )
+                    ],
+                    [
+                        Paragraph("R2", style_cellule_terme),
+                        Paragraph(
+                            "La part de variation de la valeur "
+                            "cible expliquée par le modèle, de 0 "
+                            "(aucune explication) à 1 (explication "
+                            "parfaite).",
+                            style_cellule_definition
+                        )
+                    ],
+                ]
+
+                table_glossaire_metriques = Table(
+                    lignes_glossaire_metriques,
+                    colWidths=[3.5 * cm, 10.5 * cm]
+                )
+
+                table_glossaire_metriques.setStyle(
+                    TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                    ])
+                )
+
+                elements.append(table_glossaire_metriques)
+
+                r2 = evaluation.get("r2")
+
+                if r2 is not None:
+
+                    if r2 < 0.2:
+
+                        appreciation = (
+                            f"Le R2 du modèle est de {r2:.2f} : "
+                            f"<b>le modèle explique une faible part "
+                            f"de la variation</b> de la variable "
+                            f"cible. Cela suggère que les données "
+                            f"actuelles ne contiennent pas assez "
+                            f"d'information pour bien prédire cette "
+                            f"valeur."
+                        )
+
+                    elif r2 < 0.6:
+
+                        appreciation = (
+                            f"Le R2 du modèle est de {r2:.2f} : le "
+                            f"modèle capte une partie du signal, "
+                            f"mais <b>ses prédictions restent "
+                            f"approximatives</b>."
+                        )
+
+                    else:
+
+                        appreciation = (
+                            f"Le R2 du modèle est de {r2:.2f} : le "
+                            f"modèle explique une <b>bonne part</b> "
+                            f"de la variation de la variable cible."
+                        )
+
+                    elements.append(
+                        _interpretation(appreciation)
+                    )
+
     else:
 
         elements.append(
@@ -2435,6 +3022,19 @@ def generer_rapport_pdf(
 
     elements.append(
         Paragraph("Aperçu des prédictions", style_section)
+    )
+
+    elements.append(
+        Paragraph(
+            "Le tableau ci-dessous montre ce que le modèle a prédit "
+            "sur le jeu de test, et à quelle fréquence chaque "
+            "réponse a été donnée. Cela permet de vérifier que le "
+            "modèle ne prédit pas systématiquement la même valeur "
+            "(ce qui serait un signe de mauvais apprentissage), et "
+            "de voir si la répartition prédite ressemble à la "
+            "répartition réelle des données.",
+            style_corps
+        )
     )
 
     if predictions is not None and len(predictions) > 0:
@@ -2516,6 +3116,230 @@ def generer_rapport_pdf(
             Paragraph("Aucune prédiction disponible.", style_corps)
         )
 
+    elements.append(Spacer(1, 0.6 * cm))
+
+    # ------------------------------------------------------------
+    # CONCLUSION ET RECOMMANDATIONS
+    # ------------------------------------------------------------
+
+    elements.append(PageBreak())
+
+    elements.append(
+        Paragraph("Conclusion et recommandations", style_section)
+    )
+
+    conclusion_points = []
+
+    score_cv = (
+        champion.get("score")
+        if champion is not None
+        else None
+    )
+
+    if champion is not None:
+
+        conclusion_points.append(
+            f"Le modèle {champion.get('model')} a été retenu comme "
+            f"meilleur candidat parmi ceux testés automatiquement, "
+            f"avec un score de validation croisée de "
+            f"{score_cv:.4f}."
+        )
+
+    accuracy_finale = (
+        evaluation.get("accuracy")
+        if evaluation
+        else None
+    )
+
+    r2_final = (
+        evaluation.get("r2")
+        if evaluation
+        else None
+    )
+
+    performance_faible = False
+
+    if problem_type.startswith("classification"):
+
+        if accuracy_finale is not None and score_cv is not None:
+
+            if score_cv < 0.6:
+
+                performance_faible = True
+
+    else:
+
+        if r2_final is not None and r2_final < 0.3:
+
+            performance_faible = True
+
+    if performance_faible:
+
+        conclusion_points.append(
+            "Le niveau de performance actuel reste modeste. Cela ne "
+            "signifie pas que le projet est un échec : c'est un "
+            "signal utile qui indique où concentrer les efforts "
+            "avant une mise en production."
+        )
+
+        recommandations = [
+            "Vérifier si des informations importantes (données "
+            "externes, historique client, contexte métier) ne "
+            "manquent pas dans le dataset actuel.",
+            "Faire relire le choix de la variable cible et sa "
+            "définition par un expert métier — parfois la question "
+            "posée au modèle n'est pas la bonne.",
+            "Collecter davantage de données si le volume actuel "
+            "est limité.",
+            "Explorer manuellement les données avec un data "
+            "scientist pour identifier de nouvelles variables "
+            "explicatives pertinentes.",
+            "Augmenter le nombre d'essais d'optimisation (trials) "
+            "pour permettre à l'AutoML d'explorer davantage de "
+            "réglages.",
+        ]
+
+    else:
+
+        conclusion_points.append(
+            "Le modèle obtient un niveau de performance correct à "
+            "bon sur les données actuelles."
+        )
+
+        recommandations = [
+            "Valider le modèle sur un échantillon de données plus "
+            "récent avant toute mise en production.",
+            "Mettre en place un suivi de la performance dans le "
+            "temps, car un modèle peut se dégrader si les données "
+            "évoluent (dérive des données).",
+            "Faire réviser les prédictions par un expert métier sur "
+            "un échantillon, en particulier pour les cas à fort "
+            "enjeu.",
+        ]
+
+    for point in conclusion_points:
+
+        elements.append(
+            Paragraph(f"• {point}", style_puce)
+        )
+
+    elements.append(Spacer(1, 0.3 * cm))
+
+    elements.append(
+        Paragraph("Recommandations", style_sous_section)
+    )
+
+    for recommandation in recommandations:
+
+        elements.append(
+            Paragraph(f"• {recommandation}", style_puce)
+        )
+
+    elements.append(
+        Paragraph(
+            "Ce rapport et ce modèle ont été générés automatiquement. "
+            "Ils constituent un point de départ solide, mais une "
+            "revue par un data scientist et un expert métier reste "
+            "recommandée avant toute décision importante basée sur "
+            "ces résultats.",
+            style_corps
+        )
+    )
+
+    # ------------------------------------------------------------
+    # GLOSSAIRE
+    # ------------------------------------------------------------
+
+    elements.append(PageBreak())
+
+    elements.append(
+        Paragraph("Glossaire", style_section)
+    )
+
+    elements.append(
+        Paragraph(
+            "Définitions simples des termes techniques utilisés "
+            "dans ce rapport.",
+            style_corps
+        )
+    )
+
+    glossaire = [
+        (
+            "Dataset",
+            "L'ensemble des données fournies pour l'analyse, "
+            "organisé en lignes (observations) et colonnes "
+            "(informations)."
+        ),
+        (
+            "Variable cible (target)",
+            "La donnée que l'on cherche à prédire — ici : "
+            f"« {target} »."
+        ),
+        (
+            "Feature",
+            "Une information utilisée par le modèle pour faire "
+            "sa prédiction."
+        ),
+        (
+            "Nettoyage des données",
+            "Étape de correction automatique des données "
+            "(valeurs manquantes, doublons, formats incohérents) "
+            "avant analyse."
+        ),
+        (
+            "AutoML",
+            "Processus qui teste automatiquement plusieurs "
+            "algorithmes et réglages pour trouver le modèle le "
+            "plus performant, sans intervention manuelle."
+        ),
+        (
+            "Hyperparamètre",
+            "Un réglage interne d'un algorithme de machine "
+            "learning, ajusté automatiquement pour améliorer sa "
+            "performance."
+        ),
+        (
+            "Validation croisée",
+            "Méthode qui teste un modèle plusieurs fois sur des "
+            "portions différentes des données, pour obtenir une "
+            "mesure de performance fiable."
+        ),
+        (
+            "Jeu de test",
+            "Portion des données mise de côté et jamais utilisée "
+            "pendant l'entraînement, servant à évaluer le modèle "
+            "de façon impartiale."
+        ),
+        (
+            "Classification",
+            "Type de problème où l'on prédit une catégorie parmi "
+            "un nombre limité de possibilités (ex : Oui/Non, "
+            "type de paiement)."
+        ),
+        (
+            "Régression",
+            "Type de problème où l'on prédit une valeur numérique "
+            "continue (ex : un prix, une durée)."
+        ),
+        (
+            "Base aléatoire",
+            "Le niveau de performance qu'obtiendrait un modèle qui "
+            "devine au hasard, utilisé comme point de comparaison "
+            "minimal."
+        ),
+    ]
+
+    for terme, definition in glossaire:
+
+        elements.append(
+            Paragraph(terme, style_glossaire_terme)
+        )
+
+        elements.append(
+            Paragraph(definition, style_corps)
+        )
+
     # ------------------------------------------------------------
     # EN-TETE / PIED DE PAGE
     # ------------------------------------------------------------
@@ -2579,6 +3403,708 @@ def generer_rapport_pdf(
 
         print(
             f"⚠️ Rapport PDF impossible : {e}"
+        )
+
+        return None
+
+
+# ================================================================
+# ETAPE 15ter — EXPORT DES ARTEFACTS POUR LE DATA SCIENTIST
+# ================================================================
+#
+# Exporte les données et le modèle entraîné dans des fichiers
+# ouvrables indépendamment du pipeline (CSV + modèle sérialisé),
+# afin qu'un data scientist puisse reprendre le travail dans
+# Jupyter, VSCode ou R sans dépendre des classes internes du
+# projet (FeatureEngineer, IntelligentCleaner, etc.).
+#
+# Fichiers produits :
+#
+#   data/processed/X_train.csv
+#   data/processed/X_test.csv
+#   data/processed/y_train.csv        (labels d'origine)
+#   data/processed/y_test.csv         (labels d'origine)
+#   data/processed/y_train_encode.csv (si classification)
+#   data/processed/y_test_encode.csv  (si classification)
+#   model/model_champion.joblib
+#   model/label_encoder.joblib        (si classification)
+#   reports/final/meta_pipeline.json  (infos pour le notebook)
+# ================================================================
+
+def exporter_artefacts_ml(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    y_train_ml,
+    y_test_ml,
+    champion,
+    problem_type,
+    target,
+    label_encoder=None,
+    base_dir="."
+):
+
+    chemin_data = os.path.join(base_dir, "data", "processed")
+    chemin_model = os.path.join(base_dir, "model")
+    chemin_reports = os.path.join(base_dir, "reports", "final")
+
+    os.makedirs(chemin_data, exist_ok=True)
+    os.makedirs(chemin_model, exist_ok=True)
+    os.makedirs(chemin_reports, exist_ok=True)
+
+    chemins = {}
+
+    # ------------------------------------------------------------
+    # DONNEES
+    # ------------------------------------------------------------
+
+    try:
+
+        p_X_train = os.path.join(chemin_data, "X_train.csv")
+        p_X_test = os.path.join(chemin_data, "X_test.csv")
+        p_y_train = os.path.join(chemin_data, "y_train.csv")
+        p_y_test = os.path.join(chemin_data, "y_test.csv")
+
+        X_train.to_csv(p_X_train, index=False)
+        X_test.to_csv(p_X_test, index=False)
+
+        pd.Series(y_train, name=target).to_csv(
+            p_y_train, index=False
+        )
+
+        pd.Series(y_test, name=target).to_csv(
+            p_y_test, index=False
+        )
+
+        chemins["X_train"] = p_X_train
+        chemins["X_test"] = p_X_test
+        chemins["y_train"] = p_y_train
+        chemins["y_test"] = p_y_test
+
+        if y_train_ml is not None and y_test_ml is not None:
+
+            p_y_train_enc = os.path.join(
+                chemin_data, "y_train_encode.csv"
+            )
+
+            p_y_test_enc = os.path.join(
+                chemin_data, "y_test_encode.csv"
+            )
+
+            pd.Series(
+                y_train_ml, name=f"{target}_encode"
+            ).to_csv(p_y_train_enc, index=False)
+
+            pd.Series(
+                y_test_ml, name=f"{target}_encode"
+            ).to_csv(p_y_test_enc, index=False)
+
+            chemins["y_train_encode"] = p_y_train_enc
+            chemins["y_test_encode"] = p_y_test_enc
+
+        print(
+            f"✅ Données exportées dans {chemin_data}/"
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Export des données (X_train/X_test/...) "
+            f"impossible : {e}"
+        )
+
+    # ------------------------------------------------------------
+    # MODELE
+    # ------------------------------------------------------------
+
+    try:
+
+        import joblib
+
+        if champion is not None:
+
+            modele = champion.get("model_object")
+
+            if modele is not None:
+
+                p_model = os.path.join(
+                    chemin_model, "model_champion.joblib"
+                )
+
+                joblib.dump(modele, p_model)
+
+                chemins["model"] = p_model
+
+                print(
+                    f"✅ Modèle champion exporté : {p_model}"
+                )
+
+        if label_encoder is not None:
+
+            p_encoder = os.path.join(
+                chemin_model, "label_encoder.joblib"
+            )
+
+            joblib.dump(label_encoder, p_encoder)
+
+            chemins["label_encoder"] = p_encoder
+
+            print(
+                f"✅ Label encoder exporté : {p_encoder}"
+            )
+
+    except ImportError:
+
+        print(
+            "⚠️ joblib n'est pas installé. Le modèle n'a pas pu "
+            "être exporté. Installez-le avec : pip install joblib"
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Export du modèle impossible : {e}"
+        )
+
+    # ------------------------------------------------------------
+    # METADONNEES (utilisées par le notebook généré)
+    # ------------------------------------------------------------
+
+    try:
+
+        import json
+
+        meta = _rendre_json_safe({
+            "target": target,
+            "problem_type": problem_type,
+            "model": (
+                champion.get("model")
+                if champion is not None
+                else None
+            ),
+            "score_cv": (
+                champion.get("score")
+                if champion is not None
+                else None
+            ),
+            "params": (
+                champion.get("params", {})
+                if champion is not None
+                else {}
+            ),
+            "label_classes": (
+                list(label_encoder.classes_)
+                if label_encoder is not None
+                and hasattr(label_encoder, "classes_")
+                else None
+            ),
+            "fichiers": chemins
+        })
+
+        p_meta = os.path.join(chemin_reports, "meta_pipeline.json")
+
+        chemins["meta"] = p_meta
+
+        with open(p_meta, "w", encoding="utf-8") as f:
+
+            json.dump(meta, f, indent=4, ensure_ascii=False)
+
+        print(
+            f"✅ Métadonnées exportées : {p_meta}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Export des métadonnées impossible : {e}"
+        )
+
+    return chemins
+
+
+# ================================================================
+# ETAPE 15quater — NOTEBOOK JUPYTER POUR LE DATA SCIENTIST
+# ================================================================
+#
+# Génère un notebook (.ipynb) exécutable qui :
+#
+# - charge les données exportées (X_train, X_test, y_train, ...)
+# - recalcule des statistiques descriptives (moyenne, somme,
+#   valeurs manquantes, etc.) avec du vrai code pandas
+# - recharge le modèle champion déjà entraîné (joblib)
+# - réévalue le modèle (matrice de confusion / métriques)
+# - affiche l'importance des variables si disponible
+# - laisse des cellules vides prêtes à être complétées
+#
+# Ouvrable directement dans Jupyter, VSCode (extension Jupyter)
+# ou converti en script R si besoin (les CSV exportés sont
+# lisibles depuis n'importe quel langage).
+# ================================================================
+
+def _cellule_markdown(texte):
+
+    return {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": texte.splitlines(keepends=True)
+    }
+
+
+def _cellule_code(texte):
+
+    return {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": texte.splitlines(keepends=True)
+    }
+
+
+def generer_notebook_analyse(
+    target,
+    problem_type,
+    champion,
+    label_encoder=None,
+    base_dir=".",
+    chemin_notebook=None
+):
+
+    if chemin_notebook is None:
+
+        chemin_notebook = os.path.join(
+            base_dir, "reports", "final", "notebook_analyse.ipynb"
+        )
+
+    import json
+
+    est_classification = problem_type.startswith(
+        "classification"
+    )
+
+    modele_nom = (
+        champion.get("model")
+        if champion is not None
+        else "Inconnu"
+    )
+
+    score_cv = (
+        champion.get("score")
+        if champion is not None
+        else None
+    )
+
+    params = (
+        champion.get("params", {})
+        if champion is not None
+        else {}
+    )
+
+    cellules = []
+
+    # ------------------------------------------------------------
+    # INTRODUCTION
+    # ------------------------------------------------------------
+
+    cellules.append(
+        _cellule_markdown(
+            "# Notebook d'analyse — IA Data Scientist\n"
+            "\n"
+            "Ce notebook a été généré automatiquement à la fin du "
+            "pipeline. Il permet de **rejouer les calculs**, "
+            "**vérifier les résultats** et **continuer le travail** "
+            "(nouvelles features, autres modèles, réglages "
+            "différents), sans dépendre du code interne du projet.\n"
+            "\n"
+            f"- **Variable cible :** `{target}`\n"
+            f"- **Type de problème :** `{problem_type}`\n"
+            f"- **Modèle champion :** `{modele_nom}`\n"
+            + (
+                f"- **Score de validation croisée :** "
+                f"`{score_cv:.4f}`\n"
+                if score_cv is not None
+                else ""
+            )
+        )
+    )
+
+    # ------------------------------------------------------------
+    # IMPORTS
+    # ------------------------------------------------------------
+
+    cellules.append(
+        _cellule_markdown(
+            "## 1. Imports et chargement des données\n"
+            "\n"
+            "Les fichiers ci-dessous ont été exportés automatiquement "
+            "par le pipeline dans `data/processed/`. Ils sont "
+            "indépendants du code source du projet : n'importe quel "
+            "outil (Python, R, Excel) peut les ouvrir."
+        )
+    )
+
+    cellules.append(
+        _cellule_code(
+            "import pandas as pd\n"
+            "import numpy as np\n"
+            "import matplotlib.pyplot as plt\n"
+            "import joblib\n"
+            "\n"
+            "# Chemins relatifs depuis reports/final/\n"
+            "CHEMIN_DONNEES = \"../../data/processed\"\n"
+            "CHEMIN_MODELE = \"../../model\"\n"
+            "\n"
+            "X_train = pd.read_csv(f\"{CHEMIN_DONNEES}/X_train.csv\")\n"
+            "X_test = pd.read_csv(f\"{CHEMIN_DONNEES}/X_test.csv\")\n"
+            "y_train = pd.read_csv("
+            "f\"{CHEMIN_DONNEES}/y_train.csv\").iloc[:, 0]\n"
+            "y_test = pd.read_csv("
+            "f\"{CHEMIN_DONNEES}/y_test.csv\").iloc[:, 0]\n"
+            "\n"
+            "print(\"X_train :\", X_train.shape)\n"
+            "print(\"X_test  :\", X_test.shape)\n"
+            "print(\"y_train :\", y_train.shape)\n"
+            "print(\"y_test  :\", y_test.shape)"
+        )
+    )
+
+    # ------------------------------------------------------------
+    # STATISTIQUES DESCRIPTIVES
+    # ------------------------------------------------------------
+
+    cellules.append(
+        _cellule_markdown(
+            "## 2. Statistiques descriptives\n"
+            "\n"
+            "Ces calculs (moyenne, somme, écart-type, valeurs "
+            "manquantes) sont ceux qu'un data scientist ferait "
+            "manuellement en début d'analyse. Ils sont recalculés "
+            "ici directement sur les données réelles."
+        )
+    )
+
+    cellules.append(
+        _cellule_code(
+            "# Statistiques générales sur les features (X_train)\n"
+            "X_train.describe().T"
+        )
+    )
+
+    cellules.append(
+        _cellule_code(
+            "# Moyenne, somme et écart-type par colonne numérique\n"
+            "stats = pd.DataFrame({\n"
+            "    \"moyenne\": X_train.mean(numeric_only=True),\n"
+            "    \"somme\": X_train.sum(numeric_only=True),\n"
+            "    \"ecart_type\": X_train.std(numeric_only=True),\n"
+            "    \"min\": X_train.min(numeric_only=True),\n"
+            "    \"max\": X_train.max(numeric_only=True),\n"
+            "})\n"
+            "stats"
+        )
+    )
+
+    cellules.append(
+        _cellule_code(
+            "# Valeurs manquantes par colonne\n"
+            "X_train.isna().sum().sort_values(ascending=False)"
+        )
+    )
+
+    cellules.append(
+        _cellule_markdown(
+            "## 3. Distribution de la variable cible"
+        )
+    )
+
+    if est_classification:
+
+        cellules.append(
+            _cellule_code(
+                "repartition = y_train.value_counts()\n"
+                "print(repartition)\n"
+                "\n"
+                "repartition.plot(kind=\"bar\", "
+                "color=\"#2E86AB\", figsize=(6, 3.5))\n"
+                "plt.title(f\"Répartition de la cible : "
+                f"{target}\")\n"
+                "plt.ylabel(\"Nombre d'observations\")\n"
+                "plt.tight_layout()\n"
+                "plt.show()"
+            )
+        )
+
+    else:
+
+        cellules.append(
+            _cellule_code(
+                "print(y_train.describe())\n"
+                "\n"
+                "plt.figure(figsize=(6, 3.5))\n"
+                "plt.hist(y_train, bins=30, color=\"#2E86AB\")\n"
+                "plt.title(f\"Distribution de la cible : "
+                f"{target}\")\n"
+                "plt.tight_layout()\n"
+                "plt.show()"
+            )
+        )
+
+    # ------------------------------------------------------------
+    # MODELE CHAMPION
+    # ------------------------------------------------------------
+
+    cellules.append(
+        _cellule_markdown(
+            "## 4. Modèle champion\n"
+            "\n"
+            f"Modèle retenu par l'AutoML : **{modele_nom}**\n"
+            "\n"
+            "Le modèle ci-dessous est celui déjà entraîné par le "
+            "pipeline (chargé depuis le fichier `.joblib`), avec "
+            "les hyperparamètres suivants :\n"
+            "\n"
+            + "\n".join(
+                f"- `{cle}` = `{valeur}`"
+                for cle, valeur in params.items()
+            )
+        )
+    )
+
+    cellules.append(
+        _cellule_code(
+            "modele = joblib.load("
+            "f\"{CHEMIN_MODELE}/model_champion.joblib\")\n"
+            "modele"
+        )
+    )
+
+    if est_classification and label_encoder is not None:
+
+        cellules.append(
+            _cellule_code(
+                "label_encoder = joblib.load("
+                "f\"{CHEMIN_MODELE}/label_encoder.joblib\")\n"
+                "print(\"Classes :\", "
+                "list(label_encoder.classes_))"
+            )
+        )
+
+    # ------------------------------------------------------------
+    # EVALUATION DETAILLEE
+    # ------------------------------------------------------------
+
+    cellules.append(
+        _cellule_markdown(
+            "## 5. Évaluation détaillée\n"
+            "\n"
+            "Cette section recalcule les prédictions du modèle sur "
+            "le jeu de test et affiche le détail (matrice de "
+            "confusion, rapport de classification, ou métriques de "
+            "régression selon le type de problème)."
+        )
+    )
+
+    if est_classification:
+
+        cellules.append(
+            _cellule_code(
+                "from sklearn.metrics import ("
+                "confusion_matrix, classification_report, "
+                "accuracy_score)\n"
+                "\n"
+                "y_train_encode = pd.read_csv("
+                "f\"{CHEMIN_DONNEES}/y_train_encode.csv\""
+                ").iloc[:, 0]\n"
+                "y_test_encode = pd.read_csv("
+                "f\"{CHEMIN_DONNEES}/y_test_encode.csv\""
+                ").iloc[:, 0]\n"
+                "\n"
+                "predictions_encode = modele.predict(X_test)\n"
+                "\n"
+                "print(\"Accuracy :\", "
+                "accuracy_score(y_test_encode, "
+                "predictions_encode))\n"
+                "print()\n"
+                "print(classification_report(\n"
+                "    y_test_encode,\n"
+                "    predictions_encode,\n"
+                "    target_names=[str(c) for c in "
+                "label_encoder.classes_] "
+                "if 'label_encoder' in dir() else None\n"
+                "))"
+            )
+        )
+
+        cellules.append(
+            _cellule_code(
+                "cm = confusion_matrix("
+                "y_test_encode, predictions_encode)\n"
+                "\n"
+                "plt.figure(figsize=(5, 4))\n"
+                "plt.imshow(cm, cmap=\"Blues\")\n"
+                "plt.title(\"Matrice de confusion\")\n"
+                "plt.xlabel(\"Prédit\")\n"
+                "plt.ylabel(\"Réel\")\n"
+                "plt.colorbar()\n"
+                "for i in range(cm.shape[0]):\n"
+                "    for j in range(cm.shape[1]):\n"
+                "        plt.text(j, i, cm[i, j], "
+                "ha=\"center\", va=\"center\")\n"
+                "plt.tight_layout()\n"
+                "plt.show()"
+            )
+        )
+
+    else:
+
+        cellules.append(
+            _cellule_code(
+                "from sklearn.metrics import ("
+                "mean_absolute_error, mean_squared_error, "
+                "r2_score)\n"
+                "\n"
+                "predictions = modele.predict(X_test)\n"
+                "\n"
+                "mae = mean_absolute_error(y_test, predictions)\n"
+                "rmse = np.sqrt("
+                "mean_squared_error(y_test, predictions))\n"
+                "r2 = r2_score(y_test, predictions)\n"
+                "\n"
+                "print(f\"MAE  : {mae:.4f}\")\n"
+                "print(f\"RMSE : {rmse:.4f}\")\n"
+                "print(f\"R2   : {r2:.4f}\")"
+            )
+        )
+
+        cellules.append(
+            _cellule_code(
+                "plt.figure(figsize=(5, 5))\n"
+                "plt.scatter(y_test, predictions, "
+                "alpha=0.5, color=\"#2E86AB\")\n"
+                "plt.plot(\n"
+                "    [y_test.min(), y_test.max()],\n"
+                "    [y_test.min(), y_test.max()],\n"
+                "    \"r--\"\n"
+                ")\n"
+                "plt.xlabel(\"Valeur réelle\")\n"
+                "plt.ylabel(\"Valeur prédite\")\n"
+                "plt.title(\"Prédit vs Réel\")\n"
+                "plt.tight_layout()\n"
+                "plt.show()"
+            )
+        )
+
+    # ------------------------------------------------------------
+    # IMPORTANCE DES VARIABLES
+    # ------------------------------------------------------------
+
+    cellules.append(
+        _cellule_markdown(
+            "## 6. Importance des variables\n"
+            "\n"
+            "Disponible si le modèle expose l'attribut "
+            "`feature_importances_` (Random Forest, XGBoost, "
+            "LightGBM, CatBoost, ...)."
+        )
+    )
+
+    cellules.append(
+        _cellule_code(
+            "if hasattr(modele, \"feature_importances_\"):\n"
+            "    importances = pd.Series(\n"
+            "        modele.feature_importances_,\n"
+            "        index=X_train.columns\n"
+            "    ).sort_values(ascending=False)\n"
+            "\n"
+            "    importances.head(20).plot(\n"
+            "        kind=\"barh\", figsize=(7, 6), "
+            "color=\"#2E86AB\"\n"
+            "    )\n"
+            "    plt.title(\"Top 20 variables les plus "
+            "importantes\")\n"
+            "    plt.gca().invert_yaxis()\n"
+            "    plt.tight_layout()\n"
+            "    plt.show()\n"
+            "else:\n"
+            "    print(\"Ce modèle n'expose pas "
+            "feature_importances_.\")"
+        )
+    )
+
+    # ------------------------------------------------------------
+    # POUR ALLER PLUS LOIN
+    # ------------------------------------------------------------
+
+    cellules.append(
+        _cellule_markdown(
+            "## 7. Pour aller plus loin\n"
+            "\n"
+            "Quelques pistes pour continuer ce travail directement "
+            "dans ce notebook :\n"
+            "\n"
+            "- Essayer d'autres hyperparamètres avec "
+            "`modele.set_params(...)` puis "
+            "`modele.fit(X_train, y_train_encode)`\n"
+            "- Ajouter de nouvelles colonnes calculées à `X_train` "
+            "/ `X_test` (feature engineering manuel)\n"
+            "- Comparer avec un autre algorithme "
+            "(`RandomForestClassifier`, `LGBMClassifier`, ...)\n"
+            "- Exporter `X_train` / `X_test` en `.csv` ou `.rds` "
+            "pour poursuivre l'analyse sous R\n"
+            "- Utiliser `shap` pour une explicabilité plus fine "
+            "que l'importance de variables classique"
+        )
+    )
+
+    cellules.append(
+        _cellule_code(
+            "# Espace libre pour continuer l'analyse\n"
+        )
+    )
+
+    notebook = {
+        "cells": cellules,
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3"
+            },
+            "language_info": {
+                "name": "python",
+                "version": "3"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5
+    }
+
+    try:
+
+        os.makedirs(
+            os.path.dirname(chemin_notebook),
+            exist_ok=True
+        )
+
+        with open(
+            chemin_notebook,
+            "w",
+            encoding="utf-8"
+        ) as f:
+
+            json.dump(notebook, f, indent=1, ensure_ascii=False)
+
+        print(
+            f"✅ Notebook Jupyter généré : {chemin_notebook}"
+        )
+
+        return chemin_notebook
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Génération du notebook impossible : {e}"
         )
 
         return None
@@ -2704,11 +4230,15 @@ def afficher_rapport_final(
 # MAIN
 # ================================================================
 
-def main():
+def executer_pipeline(
+    chemin_csv=None,
+    target_impose=None,
+    base_dir="."
+):
 
     afficher_intro()
 
-    creer_dossiers()
+    creer_dossiers(base_dir=base_dir)
 
     # Variables globales du pipeline
 
@@ -2766,7 +4296,7 @@ def main():
 
     try:
 
-        df_initial = charger_donnees()
+        df_initial = charger_donnees(chemin_impose=chemin_csv)
 
     except Exception as e:
 
@@ -2820,7 +4350,8 @@ def main():
     try:
 
         exporter_dataset_nettoye(
-            df_clean
+            df_clean,
+            base_dir=base_dir
         )
 
     except Exception as e:
@@ -2879,7 +4410,8 @@ def main():
         target, problem_type = choisir_cible_manuellement(
             df_clean,
             target_auto=target,
-            problem_type_auto=problem_type
+            problem_type_auto=problem_type,
+            target_impose=target_impose
         )
 
     except Exception as e:
@@ -3006,6 +4538,10 @@ def main():
     # ============================================================
 
     label_encoder_final = None
+
+    y_train_ml = None
+
+    y_test_ml = None
 
     try:
 
@@ -3135,7 +4671,8 @@ def main():
             problem_type,
             X_features,
             champion,
-            evaluation
+            evaluation,
+            base_dir=base_dir
         )
 
     except Exception as e:
@@ -3149,9 +4686,11 @@ def main():
     # ETAPE 15bis — rapport PDF professionnel
     # ------------------------------------------------------------
 
+    chemin_pdf_genere = None
+
     try:
 
-        generer_rapport_pdf(
+        chemin_pdf_genere = generer_rapport_pdf(
             df_initial,
             df_clean,
             target,
@@ -3159,13 +4698,68 @@ def main():
             X_features,
             champion,
             evaluation,
-            predictions=predictions
+            predictions=predictions,
+            label_encoder=label_encoder_final,
+            base_dir=base_dir
         )
 
     except Exception as e:
 
         afficher_erreur(
             "Le rapport PDF n'a pas pu être généré.",
+            e
+        )
+
+    # ------------------------------------------------------------
+    # ETAPE 15ter — export des données / du modèle pour le
+    # data scientist (Jupyter, VSCode, R, ...)
+    # ------------------------------------------------------------
+
+    chemins_artefacts = {}
+
+    try:
+
+        chemins_artefacts = exporter_artefacts_ml(
+            X_train,
+            X_test,
+            y_train,
+            y_test,
+            y_train_ml,
+            y_test_ml,
+            champion,
+            problem_type,
+            target,
+            label_encoder=label_encoder_final,
+            base_dir=base_dir
+        )
+
+    except Exception as e:
+
+        afficher_erreur(
+            "L'export des artefacts ML n'a pas pu être effectué.",
+            e
+        )
+
+    # ------------------------------------------------------------
+    # ETAPE 15quater — notebook Jupyter généré automatiquement
+    # ------------------------------------------------------------
+
+    chemin_notebook_genere = None
+
+    try:
+
+        chemin_notebook_genere = generer_notebook_analyse(
+            target,
+            problem_type,
+            champion,
+            label_encoder=label_encoder_final,
+            base_dir=base_dir
+        )
+
+    except Exception as e:
+
+        afficher_erreur(
+            "Le notebook Jupyter n'a pas pu être généré.",
             e
         )
 
@@ -3181,6 +4775,74 @@ def main():
         X_features,
         champion
     )
+
+    # ============================================================
+    # RESULTAT STRUCTURE (utilisé par l'API web)
+    # ============================================================
+
+    return _rendre_json_safe({
+        "succes": True,
+        "target": target,
+        "problem_type": problem_type,
+        "dataset_initial": {
+            "lignes": int(df_initial.shape[0]),
+            "colonnes": int(df_initial.shape[1])
+        },
+        "dataset_nettoye": {
+            "lignes": int(df_clean.shape[0]),
+            "colonnes": int(df_clean.shape[1])
+        },
+        "nombre_features": (
+            int(X_features.shape[1])
+            if X_features is not None
+            and hasattr(X_features, "shape")
+            else None
+        ),
+        "champion": (
+            {
+                "modele": champion.get("model"),
+                "score_cv": champion.get("score"),
+                "params": champion.get("params", {})
+            }
+            if champion is not None
+            else None
+        ),
+        "evaluation": (
+            {
+                cle: float(valeur)
+                for cle, valeur in evaluation.items()
+                if isinstance(
+                    valeur,
+                    (int, float, np.integer, np.floating)
+                )
+            }
+            if evaluation
+            else {}
+        ),
+        "fichiers": {
+            "rapport_pdf": chemin_pdf_genere,
+            "notebook": chemin_notebook_genere,
+            "dataset_nettoye": os.path.join(
+                base_dir, "data", "processed", "dataset_nettoye.csv"
+            ),
+            **chemins_artefacts
+        }
+    })
+
+
+# ================================================================
+# MAIN — POINT D'ENTREE EN LIGNE DE COMMANDE
+# ================================================================
+#
+# Usage interactif classique (inchangé) : demande le chemin du
+# CSV et la cible via input(). Pour un usage programmatique
+# (API web, tests, notebooks), appeler directement
+# executer_pipeline(chemin_csv=..., target_impose=..., base_dir=...)
+# ================================================================
+
+def main():
+
+    return executer_pipeline()
 
 
 # ================================================================

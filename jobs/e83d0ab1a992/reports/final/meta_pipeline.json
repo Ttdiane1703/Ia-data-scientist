@@ -1,0 +1,23 @@
+{
+    "target": "row.names",
+    "problem_type": "regression",
+    "model": "RandomForest",
+    "score_cv": 354.64646280529524,
+    "params": {
+        "n_estimators": 350,
+        "max_depth": 20,
+        "min_samples_split": 6,
+        "min_samples_leaf": 5,
+        "max_features": "log2"
+    },
+    "label_classes": null,
+    "fichiers": {
+        "X_train": "jobs\\e83d0ab1a992\\data\\processed\\X_train.csv",
+        "X_test": "jobs\\e83d0ab1a992\\data\\processed\\X_test.csv",
+        "y_train": "jobs\\e83d0ab1a992\\data\\processed\\y_train.csv",
+        "y_test": "jobs\\e83d0ab1a992\\data\\processed\\y_test.csv",
+        "y_train_encode": "jobs\\e83d0ab1a992\\data\\processed\\y_train_encode.csv",
+        "y_test_encode": "jobs\\e83d0ab1a992\\data\\processed\\y_test_encode.csv",
+        "model": "jobs\\e83d0ab1a992\\model\\model_champion.joblib"
+    }
+}

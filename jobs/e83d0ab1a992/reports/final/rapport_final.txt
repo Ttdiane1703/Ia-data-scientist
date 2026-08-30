@@ -1,0 +1,28 @@
+======================================================================
+              RAPPORT FINAL — IA DATA SCIENTIST
+======================================================================
+
+Dataset initial : 1313 lignes × 11 colonnes
+Dataset nettoyé : 1313 lignes × 9 colonnes
+
+Cible : row.names
+Type de problème : regression
+Features : 485
+
+MODELE CHAMPION
+--------------------------------------------------
+Modèle : RandomForest
+Score CV : 354.6465
+
+Paramètres :
+   n_estimators : 350
+   max_depth : 20
+   min_samples_split : 6
+   min_samples_leaf : 5
+   max_features : log2
+
+EVALUATION
+--------------------------------------------------
+mae : 303.5906
+rmse : 350.7983
+r2 : 0.1446

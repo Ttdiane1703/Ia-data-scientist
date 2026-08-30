@@ -1,0 +1,23 @@
+{
+    "target": "Unnamed: 0",
+    "problem_type": "regression",
+    "model": "XGBoost",
+    "score_cv": 79.41830358144507,
+    "params": {
+        "n_estimators": 500,
+        "max_depth": 8,
+        "learning_rate": 0.18047222627167303,
+        "subsample": 0.9719058960096703,
+        "colsample_bytree": 0.6284301053280544
+    },
+    "label_classes": null,
+    "fichiers": {
+        "X_train": "jobs\\1b282f6a7e72\\data\\processed\\X_train.csv",
+        "X_test": "jobs\\1b282f6a7e72\\data\\processed\\X_test.csv",
+        "y_train": "jobs\\1b282f6a7e72\\data\\processed\\y_train.csv",
+        "y_test": "jobs\\1b282f6a7e72\\data\\processed\\y_test.csv",
+        "y_train_encode": "jobs\\1b282f6a7e72\\data\\processed\\y_train_encode.csv",
+        "y_test_encode": "jobs\\1b282f6a7e72\\data\\processed\\y_test_encode.csv",
+        "model": "jobs\\1b282f6a7e72\\model\\model_champion.joblib"
+    }
+}

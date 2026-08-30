@@ -1,0 +1,28 @@
+======================================================================
+              RAPPORT FINAL — IA DATA SCIENTIST
+======================================================================
+
+Dataset initial : 200 lignes × 5 colonnes
+Dataset nettoyé : 200 lignes × 5 colonnes
+
+Cible : Unnamed: 0
+Type de problème : regression
+Features : 3
+
+MODELE CHAMPION
+--------------------------------------------------
+Modèle : XGBoost
+Score CV : 79.4183
+
+Paramètres :
+   n_estimators : 500
+   max_depth : 8
+   learning_rate : 0.18047222627167303
+   subsample : 0.9719058960096703
+   colsample_bytree : 0.6284301053280544
+
+EVALUATION
+--------------------------------------------------
+mae : 57.9497
+rmse : 71.8244
+r2 : -0.9472
