@@ -72,7 +72,9 @@ app.add_middleware(
 # remplacer par Redis, une base de données, ou Celery.
 # ----------------------------------------------------------------
 
-JOBS_DIR = Path("jobs")
+JOBS_DIR = Path(
+    "/tmp/jobs" if os.environ.get("VERCEL") else "jobs"
+)
 JOBS_DIR.mkdir(exist_ok=True)
 
 jobs = {}
