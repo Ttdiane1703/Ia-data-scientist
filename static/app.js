@@ -136,7 +136,14 @@ async function traiterFichier(fichier) {
     remplirCiblePossibles(data.colonnes);
     allerA("target");
   } catch (err) {
-    afficherErreurDataset(err.message);
+    if (err instanceof TypeError && err.message.toLowerCase().includes("fetch")) {
+      afficherErreurDataset(
+        "Impossible de joindre l'API. Lancez start_api.bat, puis ouvrez " +
+        "http://127.0.0.1:8000/ dans le navigateur."
+      );
+    } else {
+      afficherErreurDataset(err.message);
+    }
   }
 }
 
