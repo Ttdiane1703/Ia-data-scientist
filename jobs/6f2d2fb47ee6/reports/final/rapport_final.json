@@ -1,0 +1,29 @@
+{
+    "dataset_initial": {
+        "lignes": 1313,
+        "colonnes": 11
+    },
+    "dataset_nettoye": {
+        "lignes": 1313,
+        "colonnes": 9
+    },
+    "cible": "row.names",
+    "type_probleme": "regression",
+    "nombre_features": 485,
+    "champion": {
+        "modele": "RandomForest",
+        "score_cv": 351.40465689912907,
+        "parametres": {
+            "n_estimators": 300,
+            "max_depth": 14,
+            "min_samples_split": 10,
+            "min_samples_leaf": 4,
+            "max_features": "log2"
+        }
+    },
+    "evaluation": {
+        "mae": 301.1864651121186,
+        "rmse": 348.6310980635988,
+        "r2": 0.155099963131204
+    }
+}
