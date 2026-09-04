@@ -22,6 +22,7 @@
 # ================================================================
 
 import os
+import json
 import uuid
 import shutil
 import threading
@@ -87,14 +88,100 @@ def _job_dir(job_id):
     return JOBS_DIR / job_id
 
 
+# ----------------------------------------------------------------
+# PERSISTANCE SUR DISQUE
+#
+# IMPORTANT : sur les hébergeurs à plan gratuit (ex. Render free
+# tier), le processus peut redémarrer sans prévenir — mise en
+# veille après inactivité, ou redémarrage si la RAM est dépassée
+# pendant une analyse lourde (AutoML avec plusieurs modèles).
+#
+# Quand ça arrive, le dictionnaire `jobs` en mémoire est vidé,
+# mais les fichiers sur le disque (jobs/<id>/...) survivent en
+# général à un simple redémarrage du process (pas à un redéploiement
+# complet). On sauvegarde donc l'état de chaque job dans un petit
+# fichier JSON, et on le recharge automatiquement depuis le disque
+# si jamais il manque en mémoire — au lieu de renvoyer une erreur
+# "job introuvable" au client.
+# ----------------------------------------------------------------
+
+def _fichier_statut(job_id):
+
+    return _job_dir(job_id) / "_statut.json"
+
+
+def _sauvegarder_statut(job_id):
+
+    with jobs_lock:
+
+        donnees = jobs.get(job_id)
+
+    if donnees is None:
+
+        return
+
+    try:
+
+        _job_dir(job_id).mkdir(parents=True, exist_ok=True)
+
+        with open(
+            _fichier_statut(job_id), "w", encoding="utf-8"
+        ) as f:
+
+            json.dump(donnees, f, default=str)
+
+    except Exception:
+
+        # La sauvegarde de statut ne doit jamais faire planter
+        # l'analyse elle-même.
+        pass
+
+
+def _recharger_statut_depuis_disque(job_id):
+
+    chemin = _fichier_statut(job_id)
+
+    if not chemin.exists():
+
+        return None
+
+    try:
+
+        with open(chemin, "r", encoding="utf-8") as f:
+
+            return json.load(f)
+
+    except Exception:
+
+        return None
+
+
 def _verifier_job(job_id):
 
-    if job_id not in jobs:
+    with jobs_lock:
 
-        raise HTTPException(
-            status_code=404,
-            detail="Job introuvable. Vérifiez l'identifiant."
-        )
+        deja_present = job_id in jobs
+
+    if deja_present:
+
+        return
+
+    # Le job n'est plus en mémoire (redémarrage du process) :
+    # on tente de le retrouver sur le disque avant d'abandonner.
+    recupere = _recharger_statut_depuis_disque(job_id)
+
+    if recupere is not None:
+
+        with jobs_lock:
+
+            jobs[job_id] = recupere
+
+        return
+
+    raise HTTPException(
+        status_code=404,
+        detail="Job introuvable. Vérifiez l'identifiant."
+    )
 
 
 # ================================================================
@@ -155,6 +242,8 @@ async def upload_csv(fichier: UploadFile = File(...)):
             "erreur": None,
         }
 
+    _sauvegarder_statut(job_id)
+
     return {
         "job_id": job_id,
         "colonnes": colonnes,
@@ -213,11 +302,15 @@ def _executer_job(job_id, target):
 
             jobs[job_id]["titre_etape"] = titre
 
+        _sauvegarder_statut(job_id)
+
     man.definir_rapporteur_etape(rapporteur)
 
     with jobs_lock:
 
         jobs[job_id]["statut"] = "en_cours"
+
+    _sauvegarder_statut(job_id)
 
     try:
 
@@ -245,6 +338,8 @@ def _executer_job(job_id, target):
                     f"{jobs[job_id].get('titre_etape')})."
                 )
 
+        _sauvegarder_statut(job_id)
+
     except Exception as e:
 
         traceback.print_exc()
@@ -254,6 +349,8 @@ def _executer_job(job_id, target):
             jobs[job_id]["statut"] = "erreur"
 
             jobs[job_id]["erreur"] = str(e)
+
+        _sauvegarder_statut(job_id)
 
 
 @app.post("/api/analyze/{job_id}")

@@ -8,9 +8,57 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
 
+<!-- ================================================================ -->
+<!-- ECRAN DE CONNEXION                                                 -->
+<!-- ================================================================ -->
+
+<div id="auth-screen" class="auth-screen" hidden>
+  <div class="auth-card">
+    <div class="auth-brand">
+      <span class="brand-icon">◆</span>
+      <span class="brand-name">AI DATA SCIENTIST</span>
+    </div>
+
+    <h1 data-i18n="auth.welcome">Bienvenue sur IA Data Scientist</h1>
+    <p class="auth-subtitle" data-i18n="auth.subtitle">Connectez-vous pour lancer vos analyses</p>
+
+    <button type="button" id="auth-google-btn" class="btn-google">
+      <svg width="18" height="18" viewBox="0 0 18 18">
+        <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/>
+        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.98v2.33A9 9 0 0 0 9 18z"/>
+        <path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.98A9 9 0 0 0 0 9c0 1.45.35 2.83.98 4.03l2.97-2.33z"/>
+        <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .98 4.97l2.97 2.33C4.66 5.17 6.65 3.58 9 3.58z"/>
+      </svg>
+      <span data-i18n="auth.google">Continuer avec Google</span>
+    </button>
+
+    <div class="auth-sep"><span data-i18n="auth.or">ou avec un e-mail</span></div>
+
+    <form id="auth-form" class="auth-form">
+      <label class="field-label" for="auth-email" data-i18n="auth.email">Adresse e-mail</label>
+      <input type="email" id="auth-email" class="select" autocomplete="email" required>
+
+      <label class="field-label" for="auth-password" data-i18n="auth.password" style="margin-top:14px">Mot de passe</label>
+      <input type="password" id="auth-password" class="select" autocomplete="current-password" required minlength="6">
+
+      <button type="submit" id="auth-submit-btn" class="btn-primary btn-block" data-i18n="auth.signin">Se connecter</button>
+    </form>
+
+    <a href="#" id="auth-toggle-link" class="auth-toggle" data-i18n="auth.toggle.tosignup">Pas encore de compte ? Inscrivez-vous</a>
+
+    <div id="auth-error" class="banner banner-error" hidden></div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- APPLICATION (visible une fois connecté)                           -->
+<!-- ================================================================ -->
+
+<div id="app-shell" hidden>
 <div class="app">
 
   <!-- ============================================================ -->
@@ -26,60 +74,60 @@
     <nav class="nav" id="nav">
       <button class="nav-item" data-page="dataset" data-enabled="true">
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 9h16M9 9v11" stroke="currentColor" stroke-width="1.6"/></svg>
-        Dataset
+        <span data-i18n="nav.dataset">Dataset</span>
       </button>
       <button class="nav-item" data-page="target" data-enabled="false">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>
-        Target
+        <span data-i18n="nav.target">Target</span>
       </button>
       <button class="nav-item" data-page="overview" data-enabled="false">
         <svg viewBox="0 0 24 24"><path d="M4 19V5M10 19V9M16 19v-6M20 19H4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        Overview
+        <span data-i18n="nav.overview">Overview</span>
       </button>
       <button class="nav-item" data-page="quality" data-enabled="false">
         <svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-        Data Quality
+        <span data-i18n="nav.quality">Data Quality</span>
       </button>
       <button class="nav-item" data-page="statistics" data-enabled="false">
         <svg viewBox="0 0 24 24"><path d="M4 4v16h16M8 15v2M12 11v6M16 7v10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        Statistics
+        <span data-i18n="nav.statistics">Statistics</span>
       </button>
       <button class="nav-item" data-page="eda" data-enabled="false">
         <svg viewBox="0 0 24 24"><circle cx="7" cy="16" r="2" fill="currentColor"/><circle cx="12" cy="9" r="2" fill="currentColor"/><circle cx="17" cy="13" r="2" fill="currentColor"/></svg>
-        EDA
+        <span data-i18n="nav.eda">EDA</span>
       </button>
       <button class="nav-item" data-page="features" data-enabled="false">
         <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        Features
+        <span data-i18n="nav.features">Features</span>
       </button>
       <button class="nav-item" data-page="models" data-enabled="false">
         <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="4" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="13" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="13" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-        Models
+        <span data-i18n="nav.models">Models</span>
       </button>
       <button class="nav-item" data-page="bestmodel" data-enabled="false">
         <svg viewBox="0 0 24 24"><path d="M12 2l2.9 6 6.6.6-5 4.4 1.5 6.5-6-3.6-6 3.6L7.5 13l-5-4.4 6.6-.6z" fill="currentColor"/></svg>
-        Best Model
+        <span data-i18n="nav.bestmodel">Best Model</span>
       </button>
 
       <div class="nav-sep"></div>
 
       <button class="nav-item" data-page="report" data-enabled="false">
         <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-        Report
+        <span data-i18n="nav.report">Report</span>
       </button>
       <button class="nav-item" data-page="notebook" data-enabled="false">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        Notebook
+        <span data-i18n="nav.notebook">Notebook</span>
       </button>
       <button class="nav-item" data-page="export" data-enabled="false">
         <svg viewBox="0 0 24 24"><path d="M12 3v12M12 15l-4-4M12 15l4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        Export
+        <span data-i18n="nav.export">Export</span>
       </button>
     </nav>
 
     <button class="nav-item nav-settings" data-page="settings" data-enabled="true">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
-      Settings
+      <span data-i18n="nav.settings">Settings</span>
     </button>
   </aside>
 
@@ -92,16 +140,16 @@
     <!-- ============================== DATASET ============================== -->
     <section class="page active" data-page="dataset">
       <header class="page-head">
-        <h1>Charger votre dataset</h1>
-        <p>Importez votre fichier CSV, Excel ou autre format tabulaire</p>
+        <h1 data-i18n="dataset.title">Charger votre dataset</h1>
+        <p data-i18n="dataset.subtitle">Importez votre fichier CSV, Excel ou autre format tabulaire</p>
       </header>
 
       <div class="card">
         <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Déposer un fichier CSV">
           <input type="file" id="file-input" accept=".csv" hidden>
           <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v12M12 3l-4 4M12 3l4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          <p class="dropzone-text">Glissez-déposez votre fichier ici<br>ou</p>
-          <button type="button" class="btn-primary" id="browse-btn">Choisir un fichier</button>
+          <p class="dropzone-text"><span data-i18n="dataset.dropzone">Glissez-déposez votre fichier ici</span><br><span data-i18n="dataset.or">ou</span></p>
+          <button type="button" class="btn-primary" id="browse-btn" data-i18n="dataset.browse">Choisir un fichier</button>
         </div>
       </div>
 
@@ -127,8 +175,8 @@
     <!-- ============================== TARGET ============================== -->
     <section class="page" data-page="target">
       <header class="page-head">
-        <h1>Sélectionner la variable cible</h1>
-        <p>Choisissez la variable que vous souhaitez prédire</p>
+        <h1 data-i18n="target.title">Sélectionner la variable cible</h1>
+        <p data-i18n="target.subtitle">Choisissez la variable que vous souhaitez prédire</p>
       </header>
 
       <div class="card">
@@ -154,7 +202,7 @@
 
         <button type="button" class="btn-primary btn-block" id="launch-btn">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M5 3v18l15-9L5 3Z" fill="currentColor"/></svg>
-          Lancer l'analyse
+          <span data-i18n="target.launch">Lancer l'analyse</span>
         </button>
       </div>
     </section>
@@ -164,8 +212,8 @@
 
       <div id="overview-running">
         <header class="page-head">
-          <h1>Analyse en cours…</h1>
-          <p>AI Data Scientist travaille pour vous</p>
+          <h1 data-i18n="overview.running.title">Analyse en cours…</h1>
+          <p data-i18n="overview.running.subtitle">AI Data Scientist travaille pour vous</p>
         </header>
 
         <div class="card">
@@ -360,17 +408,100 @@
 
     <!-- ============================== SETTINGS ============================== -->
     <section class="page" data-page="settings">
-      <header class="page-head"><h1>Paramètres</h1></header>
+      <header class="page-head"><h1 data-i18n="settings.title">Paramètres</h1></header>
+
+      <!-- COMPTE -->
       <div class="card">
-        <button type="button" class="btn-outline" id="restart-btn">Démarrer une nouvelle analyse</button>
+        <h3 class="card-title" data-i18n="settings.account">Compte</h3>
+        <div class="account-row">
+          <img id="settings-user-avatar" class="account-avatar" hidden alt="">
+          <div>
+            <div id="settings-user-name" class="account-name">—</div>
+            <div id="settings-user-email" class="account-email">—</div>
+          </div>
+        </div>
+        <button type="button" class="btn-outline" id="settings-logout-btn" data-i18n="settings.logout">Se déconnecter</button>
       </div>
+
+      <!-- APPARENCE -->
+      <div class="card">
+        <h3 class="card-title" data-i18n="settings.appearance">Apparence</h3>
+
+        <label class="field-label" for="settings-theme-select" data-i18n="settings.theme">Thème</label>
+        <select id="settings-theme-select" class="select">
+          <option value="dark" data-i18n="settings.theme.dark">Sombre</option>
+          <option value="light" data-i18n="settings.theme.light">Clair</option>
+        </select>
+
+        <label class="field-label" for="settings-lang-select" data-i18n="settings.language" style="margin-top:16px">Langue</label>
+        <select id="settings-lang-select" class="select">
+          <option value="fr">Français</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <!-- PARAMETRES D'ANALYSE -->
+      <div class="card">
+        <h3 class="card-title" data-i18n="settings.analysis">Paramètres d'analyse</h3>
+
+        <label class="field-label" for="settings-trials" data-i18n="settings.trials">Nombre d'essais AutoML (trials)</label>
+        <input type="number" id="settings-trials" class="select" min="5" max="100" value="10" style="background-image:none;appearance:auto;">
+        <p class="settings-hint" data-i18n="settings.trials.hint">Plus de trials = meilleur modèle, mais plus lent (10–100)</p>
+
+        <label class="field-label" for="settings-testsize" data-i18n="settings.testsize" style="margin-top:16px">Proportion de données de test (%)</label>
+        <input type="number" id="settings-testsize" class="select" min="10" max="40" value="20" style="background-image:none;appearance:auto;">
+        <p class="settings-hint" data-i18n="settings.testsize.hint">Pourcentage du dataset réservé à l'évaluation (10–40%)</p>
+
+        <div class="settings-check-row" style="margin-top:20px">
+          <input type="checkbox" id="settings-notif-email" class="settings-checkbox">
+          <label for="settings-notif-email" class="settings-check-label" data-i18n="settings.notif.email">
+            Recevoir un email à la fin de chaque analyse
+          </label>
+        </div>
+
+        <button type="button" class="btn-primary" id="settings-save-btn" data-i18n="settings.save" style="margin-top:20px">Enregistrer</button>
+        <span id="settings-save-msg" class="status-line status-ok" style="display:inline-flex; margin-left:12px" hidden data-i18n="settings.saved">Préférences enregistrées</span>
+      </div>
+
+      <!-- CONNEXION BACKEND -->
+      <div class="card">
+        <h3 class="card-title">Connexion backend</h3>
+        <p class="muted-text" style="margin-bottom:12px">
+          URL de ton service Render. Nécessaire pour que l'upload et les analyses fonctionnent depuis Vercel.
+          Tu la trouves dans le Render Dashboard > ton service.
+        </p>
+        <label class="field-label" for="settings-backend-url">URL Render (ex: https://mon-app.onrender.com)</label>
+        <input type="url" id="settings-backend-url" class="select" placeholder="https://ia-data-scientist-xxxx.onrender.com" style="background-image:none;appearance:auto;">
+        <button type="button" class="btn-outline" id="settings-backend-save-btn" style="margin-top:12px">Enregistrer l'URL</button>
+        <span id="settings-backend-msg" class="status-line status-ok" style="display:inline-flex; margin-top:8px" hidden>✓ URL enregistrée — recharge la page</span>
+      </div>
+
+      <!-- NOUVELLE ANALYSE -->
+      <div class="card">
+        <button type="button" class="btn-outline" id="restart-btn" data-i18n="settings.restart">Démarrer une nouvelle analyse</button>
+      </div>
+
+      <!-- SUPPRESSION DE COMPTE -->
+      <div class="card" style="border-color: var(--red); background: var(--red-soft);">
+        <h3 class="card-title" style="color:var(--red)" data-i18n="settings.advanced">Avancé</h3>
+        <p class="muted-text" style="margin-bottom:12px" data-i18n="settings.delete.confirm">
+          Tapez SUPPRIMER pour confirmer la suppression définitive de votre compte.
+        </p>
+        <input type="text" id="settings-delete-confirm" class="select" placeholder="SUPPRIMER" style="background-image:none;appearance:auto;margin-bottom:10px;">
+        <button type="button" class="btn-outline" id="settings-delete-btn" style="border-color:var(--red);color:var(--red)" data-i18n="settings.delete.account">
+          Supprimer mon compte
+        </button>
+      </div>
+
     </section>
 
   </main>
 </div>
+</div>
 
 <div id="toast-error" class="toast" hidden></div>
 
+<script src="auth.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

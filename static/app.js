@@ -2,6 +2,31 @@
 // AI DATA SCIENTIST — Dashboard
 // ================================================================
 
+// ================================================================
+// CONFIGURATION — ADRESSE DU BACKEND RENDER
+//
+// OPTION 1 — Modifier ce fichier :
+//   Remplace la valeur ci-dessous par ton URL Render exacte.
+//   Elle ressemble à : https://ia-data-scientist-xxxx.onrender.com
+//
+// OPTION 2 — Via les Paramètres du site (recommandé) :
+//   Va dans Paramètres > "Connexion backend" et colle ton URL.
+//   Elle sera sauvegardée dans le navigateur automatiquement.
+//
+// EN LOCAL (uvicorn api:app) : laisser vide ""
+// ================================================================
+
+const _API_BASE_DEFAUT = "";
+
+// Priorité : localStorage (configuré dans les Paramètres) > valeur ci-dessus
+function getApiBase() {
+  return window._API_BASE_OVERRIDE
+    || localStorage.getItem("ia_ds_api_base")
+    || _API_BASE_DEFAUT;
+}
+
+const API_BASE = getApiBase();
+
 const el = (id) => document.getElementById(id);
 
 const ETAPES = [
@@ -108,6 +133,16 @@ fileInput.addEventListener("change", (e) => {
 async function traiterFichier(fichier) {
   el("dataset-error").hidden = true;
 
+  // ---- Vérification de la configuration ----
+  if (!API_BASE || API_BASE.includes("REMPLACE-PAR-TON-URL")) {
+    afficherErreurDataset(
+      "⚠️ Le backend n'est pas configuré. " +
+      "Dans static/app.js, remplace API_BASE par ton URL Render " +
+      "(ex: https://ia-data-scientist-xxxx.onrender.com) puis redéploie sur Vercel."
+    );
+    return;
+  }
+
   if (!fichier.name.toLowerCase().endsWith(".csv")) {
     afficherErreurDataset("Ce fichier n'est pas un .csv. Choisissez un fichier au format CSV.");
     return;
@@ -117,7 +152,7 @@ async function traiterFichier(fichier) {
   formData.append("fichier", fichier);
 
   try {
-    const reponse = await fetch("/api/upload", { method: "POST", body: formData });
+    const reponse = await fetch(`${getApiBase()}/api/upload`, { method: "POST", body: formData });
     if (!reponse.ok) {
       const detail = await reponse.json().catch(() => ({}));
       throw new Error(detail.detail || "Le dépôt du fichier a échoué.");
@@ -136,7 +171,14 @@ async function traiterFichier(fichier) {
     remplirCiblePossibles(data.colonnes);
     allerA("target");
   } catch (err) {
-    afficherErreurDataset(err.message);
+    if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+      afficherErreurDataset(
+        "Impossible de joindre le backend Render. Vérifie que le service est bien démarré " +
+        "(Render Dashboard > ton service) et que l'URL dans API_BASE est correcte."
+      );
+    } else {
+      afficherErreurDataset(err.message);
+    }
   }
 }
 
@@ -148,7 +190,7 @@ function afficherErreurDataset(message) {
 
 async function afficherInfosDataset(nomFichier) {
   try {
-    const reponse = await fetch(`/api/job/${state.jobId}/dataset-info`);
+    const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/dataset-info`);
     const info = await reponse.json();
 
     el("info-nom").textContent = nomFichier;
@@ -186,7 +228,7 @@ async function chargerDistributionCible() {
   if (!target) return;
 
   try {
-    const reponse = await fetch(`/api/job/${state.jobId}/target-distribution?target=${encodeURIComponent(target)}`);
+    const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/target-distribution?target=${encodeURIComponent(target)}`);
     if (!reponse.ok) throw new Error("Impossible de charger la distribution.");
     const data = await reponse.json();
 
@@ -271,7 +313,7 @@ el("launch-btn").addEventListener("click", async () => {
   formData.append("target", target);
 
   try {
-    const reponse = await fetch(`/api/analyze/${state.jobId}`, { method: "POST", body: formData });
+    const reponse = await fetch(`${getApiBase()}/api/analyze/${state.jobId}`, { method: "POST", body: formData });
     if (!reponse.ok) {
       const detail = await reponse.json().catch(() => ({}));
       throw new Error(detail.detail || "Impossible de lancer l'analyse.");
@@ -322,7 +364,7 @@ function demarrerSuivi() {
   clearInterval(state.pollTimer);
   state.pollTimer = setInterval(async () => {
     try {
-      const reponse = await fetch(`/api/status/${state.jobId}`);
+      const reponse = await fetch(`${getApiBase()}/api/status/${state.jobId}`);
       if (!reponse.ok) throw new Error();
       const etat = await reponse.json();
 
@@ -416,7 +458,7 @@ function afficherOverviewDone() {
 async function chargerQuality() {
   state.chargeQuality = true;
   try {
-    const reponse = await fetch(`/api/job/${state.jobId}/data-quality`);
+    const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/data-quality`);
     const q = await reponse.json();
 
     const stats = el("quality-stats");
@@ -451,7 +493,7 @@ async function chargerQuality() {
 async function chargerStatistics() {
   state.chargeStats = true;
   try {
-    const reponse = await fetch(`/api/job/${state.jobId}/statistics`);
+    const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/statistics`);
     const s = await reponse.json();
 
     const tbodyNum = document.querySelector("#stats-num-table tbody");
@@ -482,7 +524,7 @@ function fmt(v) { return (v === null || v === undefined) ? "—" : Number(v).toF
 async function chargerEda() {
   state.chargeEda = true;
   try {
-    const reponse = await fetch(`/api/job/${state.jobId}/eda`);
+    const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/eda`);
     const d = await reponse.json();
 
     const wrap = el("eda-histograms");
@@ -557,7 +599,7 @@ function remplirFeatures() {
 async function chargerModels() {
   state.chargeModels = true;
   try {
-    const reponse = await fetch(`/api/job/${state.jobId}/models`);
+    const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/models`);
     const d = await reponse.json();
 
     const tbody = document.querySelector("#models-table tbody");
@@ -627,7 +669,7 @@ function remplirBestModel() {
 
 function remplirLiens() {
   if (!state.jobId) return;
-  const base = `/api/download/${state.jobId}`;
+  const base = `${getApiBase()}/api/download/${state.jobId}`;
   el("report-download").href = `${base}/pdf`;
   el("notebook-download").href = `${base}/notebook`;
   el("export-dl-pdf").href = `${base}/pdf`;
