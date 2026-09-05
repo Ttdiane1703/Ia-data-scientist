@@ -18,8 +18,14 @@
 
 const _API_BASE_DEFAUT = "https://ia-data-scientist.onrender.com/";
 
-// Priorité : localStorage (configuré dans les Paramètres) > valeur ci-dessus
 function getApiBase() {
+  const hostname = window.location.hostname;
+  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+
+  if (isLocalHost) {
+    return window.location.origin;
+  }
+
   return window._API_BASE_OVERRIDE
     || localStorage.getItem("ia_ds_api_base")
     || _API_BASE_DEFAUT;
