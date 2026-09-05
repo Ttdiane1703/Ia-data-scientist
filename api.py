@@ -288,7 +288,7 @@ def _numero_etape_normalise(etape):
     return int(chiffres) if chiffres else 0
 
 
-def _executer_job(job_id, target):
+def _executer_job(job_id, target, trials=10, testsize=20):
 
     dossier = _job_dir(job_id)
 
@@ -317,7 +317,9 @@ def _executer_job(job_id, target):
         resultat = man.executer_pipeline(
             chemin_csv=chemin_csv,
             target_impose=target,
-            base_dir=str(dossier)
+            base_dir=str(dossier),
+            n_trials=trials,
+            test_size=testsize
         )
 
         with jobs_lock:
@@ -356,7 +358,9 @@ def _executer_job(job_id, target):
 @app.post("/api/analyze/{job_id}")
 async def lancer_analyse(
     job_id: str,
-    target: str = Form(None)
+    target: str = Form(None),
+    trials: int = Form(10),
+    testsize: int = Form(20)
 ):
 
     _verifier_job(job_id)
@@ -372,7 +376,7 @@ async def lancer_analyse(
 
     thread = threading.Thread(
         target=_executer_job,
-        args=(job_id, target),
+        args=(job_id, target, max(5, min(trials, 100)), max(10, min(testsize, 40))),
         daemon=True
     )
 

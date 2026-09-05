@@ -317,6 +317,9 @@ el("launch-btn").addEventListener("click", async () => {
 
   const formData = new FormData();
   formData.append("target", target);
+  const prefs = window.getPrefsAnalyse ? window.getPrefsAnalyse() : { trials: 10, testsize: 20 };
+  formData.append("trials", String(prefs.trials));
+  formData.append("testsize", String(prefs.testsize));
 
   try {
     const reponse = await fetch(`${getApiBase()}/api/analyze/${state.jobId}`, { method: "POST", body: formData });

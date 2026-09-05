@@ -4233,8 +4233,16 @@ def afficher_rapport_final(
 def executer_pipeline(
     chemin_csv=None,
     target_impose=None,
-    base_dir="."
+    base_dir=".",
+    n_trials=None,
+    test_size=None
 ):
+
+    global N_TRIALS, TEST_SIZE
+    if n_trials is not None:
+        N_TRIALS = max(5, min(int(n_trials), 100))
+    if test_size is not None:
+        TEST_SIZE = max(0.10, min(float(test_size) / 100, 0.40))
 
     afficher_intro()
 

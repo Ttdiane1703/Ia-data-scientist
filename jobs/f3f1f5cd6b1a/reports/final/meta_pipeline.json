@@ -1,0 +1,9 @@
+{
+    "target": "row.names",
+    "problem_type": "regression",
+    "model": null,
+    "score_cv": null,
+    "params": {},
+    "label_classes": null,
+    "fichiers": {}
+}

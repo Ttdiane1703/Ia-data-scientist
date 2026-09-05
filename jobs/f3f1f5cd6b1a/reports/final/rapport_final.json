@@ -1,0 +1,15 @@
+{
+    "dataset_initial": {
+        "lignes": 1313,
+        "colonnes": 11
+    },
+    "dataset_nettoye": {
+        "lignes": 1313,
+        "colonnes": 9
+    },
+    "cible": "row.names",
+    "type_probleme": "regression",
+    "nombre_features": 485,
+    "champion": null,
+    "evaluation": {}
+}

@@ -1,0 +1,29 @@
+{
+    "dataset_initial": {
+        "lignes": 200,
+        "colonnes": 5
+    },
+    "dataset_nettoye": {
+        "lignes": 200,
+        "colonnes": 5
+    },
+    "cible": "Unnamed: 0",
+    "type_probleme": "regression",
+    "nombre_features": 3,
+    "champion": {
+        "modele": "XGBoost",
+        "score_cv": 74.33501553045437,
+        "parametres": {
+            "n_estimators": 400,
+            "max_depth": 7,
+            "learning_rate": 0.2283920399702727,
+            "subsample": 0.6317338400045688,
+            "colsample_bytree": 0.7382962770485524
+        }
+    },
+    "evaluation": {
+        "mae": 49.51503372192383,
+        "rmse": 60.63635525099608,
+        "r2": -0.38784706592559814
+    }
+}

@@ -36,20 +36,6 @@
       <span data-i18n="auth.google">Continuer avec Google</span>
     </button>
 
-    <div class="auth-sep"><span data-i18n="auth.or">ou avec un e-mail</span></div>
-
-    <form id="auth-form" class="auth-form">
-      <label class="field-label" for="auth-email" data-i18n="auth.email">Adresse e-mail</label>
-      <input type="email" id="auth-email" class="select" autocomplete="email" required>
-
-      <label class="field-label" for="auth-password" data-i18n="auth.password" style="margin-top:14px">Mot de passe</label>
-      <input type="password" id="auth-password" class="select" autocomplete="current-password" required minlength="6">
-
-      <button type="submit" id="auth-submit-btn" class="btn-primary btn-block" data-i18n="auth.signin">Se connecter</button>
-    </form>
-
-    <a href="#" id="auth-toggle-link" class="auth-toggle" data-i18n="auth.toggle.tosignup">Pas encore de compte ? Inscrivez-vous</a>
-
     <div id="auth-error" class="banner banner-error" hidden></div>
   </div>
 </div>
@@ -461,19 +447,6 @@
 
         <button type="button" class="btn-primary" id="settings-save-btn" data-i18n="settings.save" style="margin-top:20px">Enregistrer</button>
         <span id="settings-save-msg" class="status-line status-ok" style="display:inline-flex; margin-left:12px" hidden data-i18n="settings.saved">Préférences enregistrées</span>
-      </div>
-
-      <!-- CONNEXION BACKEND -->
-      <div class="card">
-        <h3 class="card-title">Connexion backend</h3>
-        <p class="muted-text" style="margin-bottom:12px">
-          URL de ton service Render. Nécessaire pour que l'upload et les analyses fonctionnent depuis Vercel.
-          Tu la trouves dans le Render Dashboard > ton service.
-        </p>
-        <label class="field-label" for="settings-backend-url">URL Render (ex: https://mon-app.onrender.com)</label>
-        <input type="url" id="settings-backend-url" class="select" placeholder="https://ia-data-scientist-xxxx.onrender.com" style="background-image:none;appearance:auto;">
-        <button type="button" class="btn-outline" id="settings-backend-save-btn" style="margin-top:12px">Enregistrer l'URL</button>
-        <span id="settings-backend-msg" class="status-line status-ok" style="display:inline-flex; margin-top:8px" hidden>✓ URL enregistrée — recharge la page</span>
       </div>
 
       <!-- NOUVELLE ANALYSE -->
