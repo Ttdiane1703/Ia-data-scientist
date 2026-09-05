@@ -16,7 +16,7 @@
 // EN LOCAL (uvicorn api:app) : laisser vide ""
 // ================================================================
 
-const _API_BASE_DEFAUT = "https://ia-data-scientist.onrender.com/";
+const _API_BASE_DEFAUT = "https://ia-data-scientist.onrender.com";
 
 function getApiBase() {
   const hostname = window.location.hostname;
