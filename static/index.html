@@ -36,7 +36,64 @@
       <span data-i18n="auth.google">Continuer avec Google</span>
     </button>
 
+    <div class="auth-divider" style="display:flex;align-items:center;gap:10px;margin:18px 0;color:var(--text-muted,#888);font-size:13px;">
+      <span style="flex:1;height:1px;background:var(--border,#333);"></span>
+      <span data-i18n="auth.or">ou avec un e-mail</span>
+      <span style="flex:1;height:1px;background:var(--border,#333);"></span>
+    </div>
+
+    <label class="field-label" for="auth-email-input" data-i18n="auth.email">Adresse e-mail</label>
+    <input type="email" id="auth-email-input" class="select" autocomplete="email"
+           data-i18n="auth.email" data-i18n-attr="placeholder" placeholder="Adresse e-mail"
+           style="background-image:none;appearance:auto;margin-bottom:12px;">
+
+    <label class="field-label" for="auth-password-input" data-i18n="auth.password">Mot de passe</label>
+    <input type="password" id="auth-password-input" class="select" autocomplete="current-password"
+           data-i18n="auth.password" data-i18n-attr="placeholder" placeholder="Mot de passe"
+           style="background-image:none;appearance:auto;margin-bottom:16px;">
+
+    <button type="button" class="btn-primary btn-block" id="auth-email-btn" data-i18n="auth.login">Se connecter</button>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;">
+      <button type="button" id="auth-forgot-btn" style="border:none;padding:0;background:none;font-size:13px;color:var(--text-muted,#888);cursor:pointer;text-decoration:underline;" data-i18n="auth.forgot">Mot de passe oublié ?</button>
+      <button type="button" id="auth-toggle-btn" style="border:none;padding:0;background:none;font-size:13px;color:var(--text-muted,#888);cursor:pointer;text-decoration:underline;">
+        <span data-i18n="auth.no_account">Pas encore de compte ?</span> <span data-i18n="auth.signup">Créer un compte</span>
+      </button>
+    </div>
+
+    <div id="auth-dev-badge" class="banner" hidden data-i18n="auth.dev.mode" style="margin-top:14px;">Mode invité (Supabase non configuré)</div>
+
     <div id="auth-error" class="banner banner-error" hidden></div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- ECRAN NOUVEAU MOT DE PASSE (après clic sur le lien reçu par mail) -->
+<!-- ================================================================ -->
+
+<div id="reset-password-screen" class="auth-screen" hidden>
+  <div class="auth-card">
+    <div class="auth-brand">
+      <span class="brand-icon">◆</span>
+      <span class="brand-name">AI DATA SCIENTIST</span>
+    </div>
+
+    <h1 data-i18n="auth.reset.title">Choisir un nouveau mot de passe</h1>
+    <p class="auth-subtitle" data-i18n="auth.reset.subtitle">Entrez votre nouveau mot de passe ci-dessous</p>
+
+    <label class="field-label" for="reset-password-input" data-i18n="auth.password">Mot de passe</label>
+    <input type="password" id="reset-password-input" class="select" autocomplete="new-password"
+           data-i18n="auth.password" data-i18n-attr="placeholder" placeholder="Mot de passe"
+           style="background-image:none;appearance:auto;margin-bottom:12px;">
+
+    <label class="field-label" for="reset-password-confirm-input" data-i18n="auth.reset.confirm">Confirmer le mot de passe</label>
+    <input type="password" id="reset-password-confirm-input" class="select" autocomplete="new-password"
+           data-i18n="auth.reset.confirm" data-i18n-attr="placeholder" placeholder="Confirmer le mot de passe"
+           style="background-image:none;appearance:auto;margin-bottom:16px;">
+
+    <button type="button" class="btn-primary btn-block" id="reset-password-btn" data-i18n="auth.reset.submit">Enregistrer le mot de passe</button>
+
+    <div id="reset-password-error" class="banner banner-error" hidden></div>
   </div>
 </div>
 
@@ -109,6 +166,13 @@
         <svg viewBox="0 0 24 24"><path d="M12 3v12M12 15l-4-4M12 15l4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         <span data-i18n="nav.export">Export</span>
       </button>
+
+      <div class="nav-sep"></div>
+
+      <button class="nav-item" data-page="admin" data-enabled="false" hidden id="nav-admin-btn">
+        <svg viewBox="0 0 24 24"><path d="M12 2 3 6v6c0 5 4 9 9 10 5-1 9-5 9-10V6l-9-4Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span data-i18n="nav.admin">Admin</span>
+      </button>
     </nav>
 
     <button class="nav-item nav-settings" data-page="settings" data-enabled="true">
@@ -140,18 +204,18 @@
       </div>
 
       <div id="dataset-info-card" class="card" hidden>
-        <h3 class="card-title">Informations du dataset</h3>
+        <h3 class="card-title" data-i18n="dataset.info.title">Informations du dataset</h3>
         <div class="info-grid">
-          <div><span class="info-label">Nom du fichier</span><span class="info-value" id="info-nom">—</span></div>
-          <div><span class="info-label">Lignes</span><span class="info-value" id="info-lignes">—</span></div>
-          <div><span class="info-label">Colonnes</span><span class="info-value" id="info-colonnes">—</span></div>
-          <div><span class="info-label">Taille</span><span class="info-value" id="info-taille">—</span></div>
-          <div><span class="info-label">Format</span><span class="info-value" id="info-format">—</span></div>
-          <div><span class="info-label">Encodage</span><span class="info-value" id="info-encodage">—</span></div>
+          <div><span class="info-label" data-i18n="dataset.info.filename">Nom du fichier</span><span class="info-value" id="info-nom">—</span></div>
+          <div><span class="info-label" data-i18n="dataset.info.rows">Lignes</span><span class="info-value" id="info-lignes">—</span></div>
+          <div><span class="info-label" data-i18n="dataset.info.columns">Colonnes</span><span class="info-value" id="info-colonnes">—</span></div>
+          <div><span class="info-label" data-i18n="dataset.info.size">Taille</span><span class="info-value" id="info-taille">—</span></div>
+          <div><span class="info-label" data-i18n="dataset.info.format">Format</span><span class="info-value" id="info-format">—</span></div>
+          <div><span class="info-label" data-i18n="dataset.info.encoding">Encodage</span><span class="info-value" id="info-encodage">—</span></div>
         </div>
         <div class="status-line status-ok">
           <svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Dataset chargé avec succès
+          <span data-i18n="dataset.info.success">Dataset chargé avec succès</span>
         </div>
       </div>
 
@@ -172,16 +236,16 @@
         <div id="target-type-box" class="type-box" hidden>
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <div>
-            <span class="type-box-label">Type détecté</span>
+            <span class="type-box-label" data-i18n="target.type_detected">Type détecté</span>
             <span class="type-box-value" id="target-type-value">—</span>
           </div>
         </div>
 
-        <h3 class="card-title" style="margin-top:28px">Aperçu de la variable cible</h3>
+        <h3 class="card-title" style="margin-top:28px" data-i18n="target.preview_title">Aperçu de la variable cible</h3>
         <div class="target-preview">
           <div id="target-donut" class="donut"></div>
           <table class="mini-table" id="target-table">
-            <thead><tr><th></th><th>Value</th><th>Count</th><th>Percentage</th></tr></thead>
+            <thead><tr><th></th><th data-i18n="target.table.value">Value</th><th data-i18n="target.table.count">Count</th><th data-i18n="target.table.percentage">Percentage</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -220,28 +284,28 @@
           <div>
             <h1 class="title-success">
               <svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              Analysis Completed
+              <span data-i18n="overview.done.title">Analyse terminée</span>
             </h1>
-            <p>Analyse terminée avec succès</p>
+            <p data-i18n="overview.done.subtitle">Analyse terminée avec succès</p>
           </div>
         </header>
 
         <div class="card">
           <div class="stats-grid" id="overview-stats"></div>
 
-          <h3 class="card-title" style="margin-top:24px">Résumé exécutif</h3>
+          <h3 class="card-title" style="margin-top:24px" data-i18n="overview.summary.title">Résumé exécutif</h3>
           <p class="muted-text" id="overview-resume"></p>
 
           <div class="best-model-banner" id="overview-best-banner">
-            <span class="badge-star">★ MEILLEUR MODÈLE</span>
+            <span class="badge-star" data-i18n="overview.best.badge">★ MEILLEUR MODÈLE</span>
             <div class="best-model-row">
               <span class="best-model-name" id="overview-best-name">—</span>
               <div class="best-model-metrics">
-                <div><span class="metric-label">F1 Score</span><span class="metric-value" id="overview-f1">—</span></div>
-                <div><span class="metric-label">Accuracy</span><span class="metric-value" id="overview-acc">—</span></div>
+                <div><span class="metric-label" data-i18n="bestmodel.metric.f1">F1 Score</span><span class="metric-value" id="overview-f1">—</span></div>
+                <div><span class="metric-label" data-i18n="bestmodel.metric.accuracy">Accuracy</span><span class="metric-value" id="overview-acc">—</span></div>
               </div>
             </div>
-            <button class="btn-outline" data-goto="bestmodel">Voir les détails du modèle</button>
+            <button class="btn-outline" data-goto="bestmodel" data-i18n="overview.best.viewdetails">Voir les détails du modèle</button>
           </div>
         </div>
       </div>
@@ -249,40 +313,40 @@
 
     <!-- ============================== DATA QUALITY ============================== -->
     <section class="page" data-page="quality">
-      <header class="page-head"><h1>Data Quality Report</h1></header>
+      <header class="page-head"><h1 data-i18n="quality.title">Data Quality Report</h1></header>
 
       <div class="card">
         <div class="quality-stats" id="quality-stats"></div>
 
-        <h3 class="card-title" style="margin-top:24px">Détails des problèmes</h3>
+        <h3 class="card-title" style="margin-top:24px" data-i18n="quality.details_title">Détails des problèmes</h3>
         <table class="data-table" id="quality-table">
-          <thead><tr><th>Problème</th><th>Colonne</th><th>Nombre</th><th>Action</th></tr></thead>
+          <thead><tr><th data-i18n="quality.table.problem">Problème</th><th data-i18n="quality.table.column">Colonne</th><th data-i18n="quality.table.count">Nombre</th><th data-i18n="quality.table.action">Action</th></tr></thead>
           <tbody></tbody>
         </table>
 
         <div class="status-line status-ok" id="quality-ready">
           <svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Les données sont prêtes pour l'analyse
+          <span data-i18n="quality.ready">Les données sont prêtes pour l'analyse</span>
         </div>
       </div>
     </section>
 
     <!-- ============================== STATISTICS ============================== -->
     <section class="page" data-page="statistics">
-      <header class="page-head"><h1>Statistiques descriptives</h1></header>
+      <header class="page-head"><h1 data-i18n="statistics.title">Statistiques descriptives</h1></header>
 
       <div class="card">
-        <h3 class="card-title">Statistiques numériques</h3>
+        <h3 class="card-title" data-i18n="statistics.numeric_title">Statistiques numériques</h3>
         <div class="table-scroll">
           <table class="data-table" id="stats-num-table">
-            <thead><tr><th>Variable</th><th>Count</th><th>Mean</th><th>Std</th><th>Min</th><th>25%</th><th>50%</th><th>75%</th><th>Max</th><th>Skew</th><th>Kurt</th></tr></thead>
+            <thead><tr><th data-i18n="statistics.table.variable">Variable</th><th data-i18n="statistics.table.count">Count</th><th data-i18n="statistics.table.mean">Mean</th><th data-i18n="statistics.table.std">Std</th><th data-i18n="statistics.table.min">Min</th><th>25%</th><th>50%</th><th>75%</th><th data-i18n="statistics.table.max">Max</th><th data-i18n="statistics.table.skew">Skew</th><th data-i18n="statistics.table.kurt">Kurt</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
 
-        <h3 class="card-title" style="margin-top:24px">Statistiques catégorielles</h3>
+        <h3 class="card-title" style="margin-top:24px" data-i18n="statistics.categorical_title">Statistiques catégorielles</h3>
         <table class="data-table" id="stats-cat-table">
-          <thead><tr><th>Variable</th><th>Unique</th><th>Most Frequent</th><th>Frequency</th><th>Percentage</th></tr></thead>
+          <thead><tr><th data-i18n="statistics.table.variable">Variable</th><th data-i18n="statistics.table.unique">Unique</th><th data-i18n="statistics.table.most_frequent">Most Frequent</th><th data-i18n="statistics.table.frequency">Frequency</th><th data-i18n="statistics.table.percentage">Percentage</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -290,25 +354,25 @@
 
     <!-- ============================== EDA ============================== -->
     <section class="page" data-page="eda">
-      <header class="page-head"><h1>EDA — Visualisations</h1></header>
+      <header class="page-head"><h1 data-i18n="eda.title">EDA — Visualisations</h1></header>
 
       <div class="card">
-        <h3 class="card-title">Distributions</h3>
+        <h3 class="card-title" data-i18n="eda.distributions_title">Distributions</h3>
         <div class="charts-grid" id="eda-histograms"></div>
       </div>
 
       <div class="card">
-        <h3 class="card-title">Corrélations</h3>
+        <h3 class="card-title" data-i18n="eda.correlations_title">Corrélations</h3>
         <div id="eda-correlation" class="table-scroll"></div>
       </div>
     </section>
 
     <!-- ============================== FEATURES ============================== -->
     <section class="page" data-page="features">
-      <header class="page-head"><h1>Feature Engineering</h1></header>
+      <header class="page-head"><h1 data-i18n="features.title">Feature Engineering</h1></header>
       <div class="card">
         <div class="stats-grid" id="features-stats"></div>
-        <p class="muted-text">
+        <p class="muted-text" data-i18n="features.note">
           Le détail colonne par colonne des features créées est disponible dans le
           notebook Jupyter généré (section "Statistiques descriptives") et dans le
           rapport PDF.
@@ -318,10 +382,10 @@
 
     <!-- ============================== MODELS ============================== -->
     <section class="page" data-page="models">
-      <header class="page-head"><h1>Comparaison des modèles</h1></header>
+      <header class="page-head"><h1 data-i18n="models.title">Comparaison des modèles</h1></header>
       <div class="card">
         <table class="data-table" id="models-table">
-          <thead><tr><th>Modèle</th><th>Score CV</th></tr></thead>
+          <thead><tr><th data-i18n="models.table.model">Modèle</th><th data-i18n="models.table.score_cv">Score CV</th></tr></thead>
           <tbody></tbody>
         </table>
         <p class="muted-text" id="models-note"></p>
@@ -331,20 +395,20 @@
     <!-- ============================== BEST MODEL ============================== -->
     <section class="page" data-page="bestmodel">
       <header class="page-head">
-        <h1 id="bestmodel-name">Meilleur modèle</h1>
+        <h1 id="bestmodel-name" data-i18n="bestmodel.title">Meilleur modèle</h1>
       </header>
       <div class="card">
         <div class="bestmodel-grid">
           <div>
-            <h3 class="card-title">Performances</h3>
+            <h3 class="card-title" data-i18n="bestmodel.performance">Performances</h3>
             <div class="kv-list" id="bestmodel-perf"></div>
           </div>
           <div>
-            <h3 class="card-title">Informations</h3>
+            <h3 class="card-title" data-i18n="bestmodel.information">Informations</h3>
             <div class="kv-list" id="bestmodel-info"></div>
           </div>
           <div>
-            <h3 class="card-title">Hyperparamètres</h3>
+            <h3 class="card-title" data-i18n="bestmodel.hyperparams">Hyperparamètres</h3>
             <div class="kv-list" id="bestmodel-params"></div>
           </div>
         </div>
@@ -357,36 +421,36 @@
 
     <!-- ============================== REPORT ============================== -->
     <section class="page" data-page="report">
-      <header class="page-head"><h1>Rapport PDF</h1><p>Rapport complet, explicatif, pour profils techniques et non-techniques</p></header>
+      <header class="page-head"><h1 data-i18n="report.title">Rapport PDF</h1><p data-i18n="report.subtitle">Rapport complet, explicatif, pour profils techniques et non-techniques</p></header>
       <div class="card">
-        <a class="btn-primary" id="report-download" href="#" download>Télécharger le rapport PDF</a>
+        <a class="btn-primary" id="report-download" href="#" download data-i18n="report.download">Télécharger le rapport PDF</a>
       </div>
     </section>
 
     <!-- ============================== NOTEBOOK ============================== -->
     <section class="page" data-page="notebook">
-      <header class="page-head"><h1>Notebook Jupyter</h1><p>Ouvrable dans Jupyter, VSCode ou JupyterLab pour continuer l'analyse</p></header>
+      <header class="page-head"><h1 data-i18n="notebook.title">Notebook Jupyter</h1><p data-i18n="notebook.subtitle">Ouvrable dans Jupyter, VSCode ou JupyterLab pour continuer l'analyse</p></header>
       <div class="card">
-        <a class="btn-primary" id="notebook-download" href="#" download>Télécharger le notebook (.ipynb)</a>
+        <a class="btn-primary" id="notebook-download" href="#" download data-i18n="notebook.download">Télécharger le notebook (.ipynb)</a>
       </div>
     </section>
 
     <!-- ============================== EXPORT ============================== -->
     <section class="page" data-page="export">
-      <header class="page-head"><h1>Exporter les résultats</h1><p>Tous les résultats de l'analyse regroupés</p></header>
+      <header class="page-head"><h1 data-i18n="export.title">Exporter les résultats</h1><p data-i18n="export.subtitle">Tous les résultats de l'analyse regroupés</p></header>
 
       <div class="card">
         <div class="export-grid" id="export-checklist"></div>
 
         <div class="export-done">
           <div class="export-done-icon">✓</div>
-          <h3>Export disponible</h3>
-          <p>Téléchargez chaque livrable individuellement ci-dessous.</p>
+          <h3 data-i18n="export.available_title">Export disponible</h3>
+          <p data-i18n="export.available_text">Téléchargez chaque livrable individuellement ci-dessous.</p>
           <div class="export-buttons">
-            <a class="btn-outline" id="export-dl-pdf" href="#" download>Rapport PDF</a>
-            <a class="btn-outline" id="export-dl-notebook" href="#" download>Notebook</a>
-            <a class="btn-outline" id="export-dl-dataset" href="#" download>Dataset nettoyé</a>
-            <a class="btn-outline" id="export-dl-model" href="#" download>Modèle (.joblib)</a>
+            <a class="btn-outline" id="export-dl-pdf" href="#" download data-i18n="export.btn.pdf">Rapport PDF</a>
+            <a class="btn-outline" id="export-dl-notebook" href="#" download data-i18n="export.btn.notebook">Notebook</a>
+            <a class="btn-outline" id="export-dl-dataset" href="#" download data-i18n="export.btn.dataset">Dataset nettoyé</a>
+            <a class="btn-outline" id="export-dl-model" href="#" download data-i18n="export.btn.model">Modèle (.joblib)</a>
           </div>
         </div>
       </div>
@@ -466,6 +530,48 @@
         </button>
       </div>
 
+    </section>
+
+    <!-- ============================== ADMIN ============================== -->
+    <section class="page" data-page="admin">
+      <header class="page-head">
+        <h1 data-i18n="admin.title">Administration</h1>
+      </header>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <h3 class="card-title" data-i18n="admin.users_title">Utilisateurs inscrits</h3>
+          <button type="button" class="btn-outline" id="admin-refresh-btn" data-i18n="admin.refresh">Recharger</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="admin-users-table">
+            <thead><tr>
+              <th data-i18n="admin.table.email">Email</th>
+              <th data-i18n="admin.table.name">Nom</th>
+              <th data-i18n="admin.table.admin">Admin</th>
+              <th data-i18n="admin.table.created">Inscrit le</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title" data-i18n="admin.analyses_title">Toutes les analyses</h3>
+        <div class="table-scroll">
+          <table class="data-table" id="admin-analyses-table">
+            <thead><tr>
+              <th data-i18n="history.date">Date</th>
+              <th data-i18n="admin.table.user">Utilisateur</th>
+              <th data-i18n="history.file">Fichier</th>
+              <th data-i18n="history.target">Cible</th>
+              <th data-i18n="history.model">Modèle</th>
+              <th data-i18n="history.score">Score CV</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
   </main>
