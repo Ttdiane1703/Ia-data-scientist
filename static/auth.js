@@ -217,6 +217,18 @@ const TRADUCTIONS = {
     "admin.no_analyses": "Aucune analyse enregistrée.",
     "admin.refresh": "Recharger",
     "admin.error": "Impossible de charger les données d'administration. Vérifie tes politiques RLS Supabase.",
+    "admin.table.actions": "Actions",
+    "admin.action.promote": "Promouvoir",
+    "admin.action.demote": "Rétrograder",
+    "admin.action.delete_user": "Supprimer",
+    "admin.action.delete_analysis": "Supprimer",
+    "admin.action.you": "(vous)",
+    "admin.confirm.delete_user": "Supprimer toutes les données de {email} (profil + analyses) ? Cette action est irréversible. Son compte de connexion restera techniquement présent mais sans aucune donnée dans l'app.",
+    "admin.confirm.delete_analysis": "Supprimer définitivement cette analyse ?",
+    "admin.success.user_deleted": "Données de l'utilisateur supprimées.",
+    "admin.success.analysis_deleted": "Analyse supprimée.",
+    "admin.success.role_updated": "Rôle mis à jour.",
+    "admin.error.action_failed": "L'action a échoué. Vérifie tes politiques RLS Supabase.",
   },
   en: {
     "nav.dataset": "Dataset", "nav.target": "Target", "nav.overview": "Overview",
@@ -421,6 +433,18 @@ const TRADUCTIONS = {
     "admin.no_analyses": "No analyses saved yet.",
     "admin.refresh": "Refresh",
     "admin.error": "Unable to load admin data. Check your Supabase RLS policies.",
+    "admin.table.actions": "Actions",
+    "admin.action.promote": "Promote",
+    "admin.action.demote": "Demote",
+    "admin.action.delete_user": "Delete",
+    "admin.action.delete_analysis": "Delete",
+    "admin.action.you": "(you)",
+    "admin.confirm.delete_user": "Delete all data for {email} (profile + analyses)? This is irreversible. Their login account will technically remain but with no data left in the app.",
+    "admin.confirm.delete_analysis": "Permanently delete this analysis?",
+    "admin.success.user_deleted": "User data deleted.",
+    "admin.success.analysis_deleted": "Analysis deleted.",
+    "admin.success.role_updated": "Role updated.",
+    "admin.error.action_failed": "The action failed. Check your Supabase RLS policies.",
   },
 };
 
@@ -454,6 +478,9 @@ function appliquerLangue(langue) {
   // Permet à app.js de retraduire le contenu déjà généré dynamiquement
   // (tableaux, résumés, checklist...) sans recharger la page.
   window.dispatchEvent(new CustomEvent("ia-ds-lang-changed"));
+  // L'historique est géré dans ce même fichier : on le rafraîchit ici
+  // directement s'il a déjà été affiché au moins une fois.
+  if (document.getElementById("history-list")?.children.length) chargerHistorique();
 }
 
 // Rendu accessible à app.js pour traduire tout texte généré dynamiquement.

@@ -473,6 +473,15 @@
         <button type="button" class="btn-outline" id="settings-logout-btn" data-i18n="settings.logout">Se déconnecter</button>
       </div>
 
+      <!-- HISTORIQUE DES ANALYSES -->
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <h3 class="card-title" data-i18n="history.title">Historique des analyses</h3>
+          <button type="button" class="btn-outline" id="history-reload-btn" data-i18n="history.reload">Recharger</button>
+        </div>
+        <div id="history-list"></div>
+      </div>
+
       <!-- APPARENCE -->
       <div class="card">
         <h3 class="card-title" data-i18n="settings.appearance">Apparence</h3>
@@ -550,6 +559,7 @@
               <th data-i18n="admin.table.name">Nom</th>
               <th data-i18n="admin.table.admin">Admin</th>
               <th data-i18n="admin.table.created">Inscrit le</th>
+              <th data-i18n="admin.table.actions">Actions</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -567,6 +577,7 @@
               <th data-i18n="history.target">Cible</th>
               <th data-i18n="history.model">Modèle</th>
               <th data-i18n="history.score">Score CV</th>
+              <th data-i18n="admin.table.actions">Actions</th>
             </tr></thead>
             <tbody></tbody>
           </table>

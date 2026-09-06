@@ -404,6 +404,9 @@ function demarrerSuivi() {
         clearInterval(state.pollTimer);
         clearInterval(state.chronoTimer);
         state.resultat = etat.resultat;
+        if (window.sauvegarderAnalyse) {
+          window.sauvegarderAnalyse(state.nomFichierCourant || "—", state.resultat);
+        }
         afficherOverviewDone();
       } else if (etat.statut === "erreur") {
         clearInterval(state.pollTimer);
@@ -788,23 +791,74 @@ function rendreAdminUsers(profils) {
   const tbody = document.querySelector("#admin-users-table tbody");
   if (!tbody) return;
   if (!profils || profils.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4">${tr("admin.no_users")}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5">${tr("admin.no_users")}</td></tr>`;
     return;
   }
-  tbody.innerHTML = profils.map((p) => `
+  const moiId = window.currentUser?.id;
+  tbody.innerHTML = profils.map((p) => {
+    const estMoi = p.id === moiId;
+    const boutonRole = estMoi
+      ? tr("admin.action.you")
+      : `<button type="button" class="btn-outline admin-toggle-role" data-id="${p.id}" data-current="${p.is_admin ? "1" : "0"}">${p.is_admin ? tr("admin.action.demote") : tr("admin.action.promote")}</button>`;
+    const boutonDelete = estMoi
+      ? ""
+      : `<button type="button" class="btn-outline admin-delete-user" data-id="${p.id}" data-email="${escapeHtml(p.email || "")}">${tr("admin.action.delete_user")}</button>`;
+    return `
     <tr>
       <td>${escapeHtml(p.email || "—")}</td>
       <td>${escapeHtml(p.full_name || "—")}</td>
       <td>${p.is_admin ? tr("admin.badge.yes") : tr("admin.badge.no")}</td>
       <td>${formaterDate(p.created_at)}</td>
-    </tr>`).join("");
+      <td style="display:flex;gap:8px;flex-wrap:wrap;">${boutonRole} ${boutonDelete}</td>
+    </tr>`;
+  }).join("");
+
+  tbody.querySelectorAll(".admin-toggle-role").forEach((btn) => {
+    btn.addEventListener("click", () => basculerRoleAdmin(btn.dataset.id, btn.dataset.current === "1"));
+  });
+  tbody.querySelectorAll(".admin-delete-user").forEach((btn) => {
+    btn.addEventListener("click", () => supprimerUtilisateur(btn.dataset.id, btn.dataset.email));
+  });
+}
+
+async function basculerRoleAdmin(userId, estActuellementAdmin) {
+  const sb = window.supabaseClient;
+  if (!sb) return;
+  try {
+    const { error } = await sb.from("profiles").update({ is_admin: !estActuellementAdmin }).eq("id", userId);
+    if (error) throw error;
+    toast(tr("admin.success.role_updated"));
+    state.chargeAdmin = false;
+    chargerAdmin();
+  } catch (err) {
+    toast(tr("admin.error.action_failed"));
+  }
+}
+
+async function supprimerUtilisateur(userId, email) {
+  const message = tr("admin.confirm.delete_user", { email: email || userId });
+  if (!window.confirm(message)) return;
+
+  const sb = window.supabaseClient;
+  if (!sb) return;
+  try {
+    const { error: errAnalyses } = await sb.from("analyses").delete().eq("user_id", userId);
+    if (errAnalyses) throw errAnalyses;
+    const { error: errProfil } = await sb.from("profiles").delete().eq("id", userId);
+    if (errProfil) throw errProfil;
+    toast(tr("admin.success.user_deleted"));
+    state.chargeAdmin = false;
+    chargerAdmin();
+  } catch (err) {
+    toast(tr("admin.error.action_failed"));
+  }
 }
 
 function rendreAdminAnalyses(analyses, profils) {
   const tbody = document.querySelector("#admin-analyses-table tbody");
   if (!tbody) return;
   if (!analyses || analyses.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6">${tr("admin.no_analyses")}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7">${tr("admin.no_analyses")}</td></tr>`;
     return;
   }
   const emailParId = {};
@@ -818,7 +872,28 @@ function rendreAdminAnalyses(analyses, profils) {
       <td>${escapeHtml(a.target || "—")}</td>
       <td>${escapeHtml(a.champion_modele || "—")}</td>
       <td>${a.score_cv != null ? Number(a.score_cv).toFixed(4) : "—"}</td>
+      <td><button type="button" class="btn-outline admin-delete-analysis" data-id="${a.id}">${tr("admin.action.delete_analysis")}</button></td>
     </tr>`).join("");
+
+  tbody.querySelectorAll(".admin-delete-analysis").forEach((btn) => {
+    btn.addEventListener("click", () => supprimerAnalyseAdmin(btn.dataset.id));
+  });
+}
+
+async function supprimerAnalyseAdmin(analyseId) {
+  if (!window.confirm(tr("admin.confirm.delete_analysis"))) return;
+
+  const sb = window.supabaseClient;
+  if (!sb) return;
+  try {
+    const { error } = await sb.from("analyses").delete().eq("id", analyseId);
+    if (error) throw error;
+    toast(tr("admin.success.analysis_deleted"));
+    state.chargeAdmin = false;
+    chargerAdmin();
+  } catch (err) {
+    toast(tr("admin.error.action_failed"));
+  }
 }
 
 el("admin-refresh-btn")?.addEventListener("click", () => {
