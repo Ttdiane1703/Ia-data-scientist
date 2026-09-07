@@ -799,8 +799,13 @@ async function chargerProfil(userId) {
     .from("profiles").select("theme, language, full_name, avatar_url, is_admin")
     .eq("id", userId).single();
   if (error) return null;
-  if (data?.theme) appliquerTheme(data.theme);
-  if (data?.language) appliquerLangue(data.language);
+
+  const themeDejaLocal = localStorage.getItem("ia_ds_theme");
+  const langueDejaLocale = localStorage.getItem("ia_ds_lang");
+
+  if (!themeDejaLocal && data?.theme) appliquerTheme(data.theme);
+  if (!langueDejaLocale && data?.language) appliquerLangue(data.language);
+
   return data;
 }
 
