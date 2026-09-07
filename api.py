@@ -4,7 +4,8 @@
 #
 # API FastAPI qui pilote le pipeline existant (man.py) :
 #
-#   1. POST /api/upload            -> dépose un CSV, crée un job
+#   1. POST /api/upload            -> dépose un fichier (CSV,
+#                                      Excel ou JSON), crée un job
 #   2. POST /api/analyze/{job_id}  -> lance l'analyse (arrière-plan)
 #   3. GET  /api/status/{job_id}   -> suit la progression en direct
 #   4. GET  /api/download/{job_id}/{type} -> télécharge un livrable
@@ -15,7 +16,7 @@
 #
 # Lancement :
 #
-#   pip install fastapi "uvicorn[standard]" python-multipart
+#   pip install fastapi "uvicorn[standard]" python-multipart openpyxl
 #   uvicorn api:app --reload
 #
 # Puis ouvrir : http://127.0.0.1:8000
@@ -35,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import pandas as pd
+import numpy as np
 
 import man
 
@@ -46,7 +48,7 @@ app = FastAPI(
         "nettoyage, feature engineering, AutoML, évaluation, "
         "rapport PDF et notebook Jupyter."
     ),
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # ----------------------------------------------------------------
@@ -185,17 +187,107 @@ def _verifier_job(job_id):
 
 
 # ================================================================
-# 1. UPLOAD DU FICHIER CSV
+# GESTION MULTI-FORMATS (CSV / EXCEL / JSON)
+# ================================================================
+#
+# Le dashboard accepte désormais trois formats en entrée. Quel que
+# soit le format d'origine, le fichier est immédiatement normalisé
+# en CSV standard (jobs/<id>/input.csv). Tout le reste du backend
+# (data-quality, statistics, eda, target-distribution, man.py, ...)
+# continue de lire ce même input.csv sans aucune modification —
+# la conversion est le seul point de contact avec le format brut.
+# ================================================================
+
+EXTENSIONS_ACCEPTEES = {".csv", ".xlsx", ".xls", ".json"}
+
+
+def _detecter_format(nom_fichier):
+
+    ext = os.path.splitext(nom_fichier.lower())[1]
+
+    if ext == ".csv":
+        return "CSV", ext
+
+    if ext in (".xlsx", ".xls"):
+        return "Excel", ext
+
+    if ext == ".json":
+        return "JSON", ext
+
+    return None, ext
+
+
+def _lire_fichier_quelconque(chemin, ext):
+    """
+    Charge un fichier CSV, Excel ou JSON et retourne un DataFrame
+    pandas standard.
+    """
+
+    if ext == ".csv":
+
+        try:
+
+            return pd.read_csv(chemin)
+
+        except UnicodeDecodeError:
+
+            return pd.read_csv(chemin, encoding="latin-1")
+
+    if ext in (".xlsx", ".xls"):
+
+        return pd.read_excel(chemin)
+
+    if ext == ".json":
+
+        with open(chemin, "r", encoding="utf-8") as f:
+
+            contenu = json.load(f)
+
+        # ------------------------------------------------------------
+        # NORMALISATION EN TABLEAU
+        #
+        # - Liste d'objets ( [ {...}, {...} ] )      -> direct
+        # - Objet avec une liste imbriquée
+        #   ( {"data": [ {...}, {...} ]} )           -> détection auto
+        # - Objet isolé ( {...} )                    -> une seule ligne
+        # ------------------------------------------------------------
+
+        if isinstance(contenu, list):
+
+            return pd.json_normalize(contenu)
+
+        if isinstance(contenu, dict):
+
+            for valeur in contenu.values():
+
+                if isinstance(valeur, list):
+
+                    return pd.json_normalize(valeur)
+
+            return pd.json_normalize([contenu])
+
+        raise ValueError("Structure JSON non reconnue.")
+
+    raise ValueError(f"Extension non supportée : {ext}")
+
+
+# ================================================================
+# 1. UPLOAD DU FICHIER (CSV, EXCEL OU JSON)
 # ================================================================
 
 @app.post("/api/upload")
-async def upload_csv(fichier: UploadFile = File(...)):
+async def upload_fichier(fichier: UploadFile = File(...)):
 
-    if not fichier.filename.lower().endswith(".csv"):
+    format_detecte, extension = _detecter_format(fichier.filename)
+
+    if format_detecte is None:
 
         raise HTTPException(
             status_code=400,
-            detail="Seuls les fichiers .csv sont acceptés."
+            detail=(
+                "Format non supporté. Formats acceptés : "
+                "CSV (.csv), Excel (.xlsx, .xls), JSON (.json)."
+            )
         )
 
     job_id = uuid.uuid4().hex[:12]
@@ -204,11 +296,11 @@ async def upload_csv(fichier: UploadFile = File(...)):
 
     dossier.mkdir(parents=True, exist_ok=True)
 
-    chemin_csv = dossier / "input.csv"
+    chemin_original = dossier / f"original_upload{extension}"
 
     try:
 
-        with open(chemin_csv, "wb") as f:
+        with open(chemin_original, "wb") as f:
 
             shutil.copyfileobj(fichier.file, f)
 
@@ -216,9 +308,17 @@ async def upload_csv(fichier: UploadFile = File(...)):
 
         await fichier.close()
 
+    # ------------------------------------------------------------
+    # CONVERSION VERS CSV STANDARD
+    #
+    # Quel que soit le format d'origine, le reste du pipeline et
+    # des endpoints d'analyse travaillent uniquement sur
+    # jobs/<id>/input.csv.
+    # ------------------------------------------------------------
+
     try:
 
-        apercu = pd.read_csv(chemin_csv, nrows=200)
+        df = _lire_fichier_quelconque(chemin_original, extension)
 
     except Exception as e:
 
@@ -226,10 +326,34 @@ async def upload_csv(fichier: UploadFile = File(...)):
 
         raise HTTPException(
             status_code=400,
-            detail=f"Fichier CSV illisible : {e}"
+            detail=f"Fichier {format_detecte} illisible : {e}"
         )
 
-    colonnes = list(apercu.columns)
+    if df is None or df.empty:
+
+        shutil.rmtree(dossier, ignore_errors=True)
+
+        raise HTTPException(
+            status_code=400,
+            detail="Le fichier ne contient aucune donnée exploitable."
+        )
+
+    chemin_csv = dossier / "input.csv"
+
+    try:
+
+        df.to_csv(chemin_csv, index=False, encoding="utf-8")
+
+    except Exception as e:
+
+        shutil.rmtree(dossier, ignore_errors=True)
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Conversion vers CSV impossible : {e}"
+        )
+
+    colonnes = list(df.columns)
 
     with jobs_lock:
 
@@ -240,6 +364,8 @@ async def upload_csv(fichier: UploadFile = File(...)):
             "nb_etapes_total": NB_ETAPES_TOTAL,
             "resultat": None,
             "erreur": None,
+            "nom_fichier": fichier.filename,
+            "format_original": format_detecte,
         }
 
     _sauvegarder_statut(job_id)
@@ -247,9 +373,10 @@ async def upload_csv(fichier: UploadFile = File(...)):
     return {
         "job_id": job_id,
         "colonnes": colonnes,
-        "nb_lignes_apercu": int(apercu.shape[0]),
+        "format": format_detecte,
+        "nb_lignes_apercu": int(df.head(200).shape[0]),
         "apercu": (
-            apercu.head(5)
+            df.head(5)
             .fillna("")
             .astype(str)
             .to_dict(orient="records")
@@ -468,14 +595,12 @@ async def telecharger(job_id: str, type_fichier: str):
 # ENDPOINTS D'ANALYSE POUR LE DASHBOARD
 #
 # Ces endpoints calculent directement leurs réponses avec pandas
-# à partir des fichiers déjà sur disque (input.csv brut, ou
-# dataset_nettoye.csv une fois l'analyse terminée). Ils ne
-# dépendent d'aucune classe interne du projet (IntelligentCleaner,
+# à partir des fichiers déjà sur disque (input.csv, déjà normalisé
+# depuis CSV/Excel/JSON au moment de l'upload). Ils ne dépendent
+# d'aucune classe interne du projet (IntelligentCleaner,
 # AutomaticEDA, ...) et sont donc garantis fonctionner quel que
 # soit leur contenu.
 # ================================================================
-
-import numpy as np
 
 
 def _lire_csv_job(job_id, nom_fichier, sous_dossier=None):
@@ -535,12 +660,16 @@ async def dataset_info(job_id: str):
 
     taille_octets = chemin_csv.stat().st_size
 
+    with jobs_lock:
+
+        meta = dict(jobs.get(job_id, {}))
+
     return {
-        "nom_fichier": "input.csv",
+        "nom_fichier": meta.get("nom_fichier", "input.csv"),
         "lignes": int(df.shape[0]),
         "colonnes": int(df.shape[1]),
         "taille_ko": round(taille_octets / 1024, 1),
-        "format": "CSV",
+        "format": meta.get("format_original", "CSV"),
         "encodage": "utf-8",
         "colonnes_liste": list(df.columns),
     }
@@ -767,6 +896,11 @@ async def statistics(job_id: str):
 
 # ----------------------------------------------------------------
 # 5. EDA — HISTOGRAMMES (données pour graphiques côté client)
+#
+# Renvoie désormais TOUTES les colonnes numériques disponibles
+# (jusqu'à 40, garde-fou technique plutôt que limite produit) :
+# le frontend affiche un sélecteur de variables et filtre
+# lui-même les graphiques à afficher, sans nouvel appel réseau.
 # ----------------------------------------------------------------
 
 @app.get("/api/job/{job_id}/eda")
@@ -784,7 +918,7 @@ async def eda(job_id: str, nb_bins: int = 12):
 
     colonnes_numeriques = list(
         df.select_dtypes(include=[np.number]).columns
-    )[:6]
+    )[:40]
 
     for colonne in colonnes_numeriques:
 

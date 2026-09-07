@@ -270,6 +270,13 @@ def creer_dossiers(base_dir="."):
 
 # ================================================================
 # ETAPE 1 — CHARGEMENT
+#
+# Supporte trois formats en entrée : CSV, Excel (.xlsx / .xls) et
+# JSON. Le format est détecté automatiquement à partir de
+# l'extension du fichier fourni. Quel que soit le format
+# d'origine, le résultat est toujours un DataFrame pandas standard
+# — le reste du pipeline (nettoyage, EDA, AutoML, ...) n'a donc
+# besoin d'aucune modification.
 # ================================================================
 
 def charger_donnees(chemin_impose=None):
@@ -286,13 +293,13 @@ def charger_donnees(chemin_impose=None):
     else:
 
         chemin = input(
-            "Entrez le chemin du fichier CSV : "
+            "Entrez le chemin du fichier (CSV, Excel ou JSON) : "
         ).strip()
 
     if not chemin:
 
         raise ValueError(
-            "Aucun fichier CSV n'a été fourni."
+            "Aucun fichier n'a été fourni."
         )
 
     if not os.path.exists(chemin):
@@ -301,31 +308,93 @@ def charger_donnees(chemin_impose=None):
             f"Fichier introuvable : {chemin}"
         )
 
-    loader = DataLoader()
+    extension = os.path.splitext(chemin.lower())[1]
 
-    # Recherche automatique de la bonne méthode
+    if extension == ".csv":
 
-    methode = trouver_methode(
-        loader,
-        [
-            "load_csv",
-            "charger_csv",
-            "load",
-            "charger",
-            "read_csv"
-        ]
-    )
+        loader = DataLoader()
 
-    if methode is None:
+        # Recherche automatique de la bonne méthode
 
-        raise AttributeError(
-            "Aucune méthode de chargement compatible "
-            "n'a été trouvée dans DataLoader."
+        methode = trouver_methode(
+            loader,
+            [
+                "load_csv",
+                "charger_csv",
+                "load",
+                "charger",
+                "read_csv"
+            ]
         )
 
-    df = methode(
-        chemin
-    )
+        if methode is None:
+
+            raise AttributeError(
+                "Aucune méthode de chargement compatible "
+                "n'a été trouvée dans DataLoader."
+            )
+
+        df = methode(
+            chemin
+        )
+
+    elif extension in (".xlsx", ".xls"):
+
+        df = pd.read_excel(chemin)
+
+    elif extension == ".json":
+
+        import json as _json
+
+        with open(chemin, "r", encoding="utf-8") as fichier_json:
+
+            contenu = _json.load(fichier_json)
+
+        # ------------------------------------------------------------
+        # NORMALISATION DU JSON EN TABLEAU
+        #
+        # - Une liste d'objets ( [ {...}, {...} ] ) devient directement
+        #   un DataFrame ligne par ligne.
+        # - Un objet contenant une liste imbriquée
+        #   ( {"data": [ {...}, {...} ]} ) est détecté automatiquement
+        #   en cherchant la première clé dont la valeur est une liste.
+        # - Un objet unique isolé ( {...} ) devient une seule ligne.
+        # ------------------------------------------------------------
+
+        if isinstance(contenu, list):
+
+            df = pd.json_normalize(contenu)
+
+        elif isinstance(contenu, dict):
+
+            df = None
+
+            for valeur in contenu.values():
+
+                if isinstance(valeur, list):
+
+                    df = pd.json_normalize(valeur)
+
+                    break
+
+            if df is None:
+
+                df = pd.json_normalize([contenu])
+
+        else:
+
+            raise ValueError(
+                "Structure JSON non reconnue. Le fichier doit "
+                "contenir une liste d'objets ou un objet avec une "
+                "liste imbriquée."
+            )
+
+    else:
+
+        raise ValueError(
+            f"Extension non supportée : {extension}. "
+            f"Formats acceptés : .csv, .xlsx, .xls, .json"
+        )
 
     print("✅ Données chargées")
 
@@ -4843,8 +4912,8 @@ def executer_pipeline(
 # ================================================================
 #
 # Usage interactif classique (inchangé) : demande le chemin du
-# CSV et la cible via input(). Pour un usage programmatique
-# (API web, tests, notebooks), appeler directement
+# CSV/Excel/JSON et la cible via input(). Pour un usage
+# programmatique (API web, tests, notebooks), appeler directement
 # executer_pipeline(chemin_csv=..., target_impose=..., base_dir=...)
 # ================================================================
 

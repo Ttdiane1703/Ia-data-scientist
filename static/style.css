@@ -955,3 +955,12 @@ html, body {
 
 .account-name { font-size: 14.5px; font-weight: 600; color: var(--text-100); }
 .account-email { font-size: 12.5px; color: var(--text-400); }
+.eda-var-selector { margin-bottom: 16px; }
+.eda-selector-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.eda-selector-label { font-size:13px; color:var(--text-muted,#888); }
+.eda-selector-toggle { background:none; border:1px solid var(--border,#333); color:var(--text-muted,#888); border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; }
+.eda-selector-toggle:hover { color:#fff; border-color:#555; }
+.eda-chip-list { display:flex; flex-wrap:wrap; gap:8px; }
+.eda-chip { display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border,#333); border-radius:20px; font-size:12.5px; cursor:pointer; user-select:none; }
+.eda-chip input { accent-color:#3B82F6; cursor:pointer; }
+.chart-card canvas { max-width:100%; }

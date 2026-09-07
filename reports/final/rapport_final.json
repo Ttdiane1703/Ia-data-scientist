@@ -7,23 +7,23 @@
         "lignes": 200,
         "colonnes": 5
     },
-    "cible": "Unnamed: 0",
+    "cible": "Sales",
     "type_probleme": "regression",
-    "nombre_features": 3,
+    "nombre_features": 2,
     "champion": {
         "modele": "XGBoost",
-        "score_cv": 75.27744112659904,
+        "score_cv": 5.865371473612403,
         "parametres": {
-            "n_estimators": 100,
-            "max_depth": 5,
-            "learning_rate": 0.12973690620626846,
-            "subsample": 0.7807267493203035,
-            "colsample_bytree": 0.6109802717108729
+            "n_estimators": 350,
+            "max_depth": 6,
+            "learning_rate": 0.22711536921581052,
+            "subsample": 0.9735254341939188,
+            "colsample_bytree": 0.6558252203355647
         }
     },
     "evaluation": {
-        "mae": 54.37439727783203,
-        "rmse": 64.90739346609521,
-        "r2": -0.590243935585022
+        "mae": 4.851500425338745,
+        "rmse": 6.266027222570241,
+        "r2": -0.24393620906970814
     }
 }

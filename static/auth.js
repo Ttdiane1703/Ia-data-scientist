@@ -807,6 +807,9 @@ async function chargerProfil(userId) {
 async function sauvegarderProfil(userId, { theme, language }) {
   if (!supabase) return true;
   const { error } = await supabase.from("profiles").update({ theme, language }).eq("id", userId);
+  if (error) {
+    console.error("Impossible de sauvegarder le profil (thème/langue) :", error.message);
+  }
   return !error;
 }
 

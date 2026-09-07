@@ -5,24 +5,24 @@
 Dataset initial : 200 lignes × 5 colonnes
 Dataset nettoyé : 200 lignes × 5 colonnes
 
-Cible : Unnamed: 0
+Cible : Sales
 Type de problème : regression
-Features : 3
+Features : 2
 
 MODELE CHAMPION
 --------------------------------------------------
 Modèle : XGBoost
-Score CV : 75.2774
+Score CV : 5.8654
 
 Paramètres :
-   n_estimators : 100
-   max_depth : 5
-   learning_rate : 0.12973690620626846
-   subsample : 0.7807267493203035
-   colsample_bytree : 0.6109802717108729
+   n_estimators : 350
+   max_depth : 6
+   learning_rate : 0.22711536921581052
+   subsample : 0.9735254341939188
+   colsample_bytree : 0.6558252203355647
 
 EVALUATION
 --------------------------------------------------
-mae : 54.3744
-rmse : 64.9074
-r2 : -0.5902
+mae : 4.8515
+rmse : 6.2660
+r2 : -0.2439

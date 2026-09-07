@@ -191,15 +191,16 @@
     <section class="page active" data-page="dataset">
       <header class="page-head">
         <h1 data-i18n="dataset.title">Charger votre dataset</h1>
-        <p data-i18n="dataset.subtitle">Importez votre fichier CSV, Excel ou autre format tabulaire</p>
+        <p data-i18n="dataset.subtitle">Importez votre fichier CSV, Excel (.xlsx) ou JSON</p>
       </header>
 
       <div class="card">
-        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Déposer un fichier CSV">
-          <input type="file" id="file-input" accept=".csv" hidden>
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Déposer un fichier CSV, Excel ou JSON">
+          <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.json" hidden>
           <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v12M12 3l-4 4M12 3l4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <p class="dropzone-text"><span data-i18n="dataset.dropzone">Glissez-déposez votre fichier ici</span><br><span data-i18n="dataset.or">ou</span></p>
           <button type="button" class="btn-primary" id="browse-btn" data-i18n="dataset.browse">Choisir un fichier</button>
+          <p class="dropzone-formats" style="margin-top:10px;font-size:12px;color:var(--text-muted,#888);">CSV · Excel (.xlsx, .xls) · JSON</p>
         </div>
       </div>
 
@@ -358,6 +359,7 @@
 
       <div class="card">
         <h3 class="card-title" data-i18n="eda.distributions_title">Distributions</h3>
+        <div id="eda-var-selector" class="eda-var-selector"></div>
         <div class="charts-grid" id="eda-histograms"></div>
       </div>
 
@@ -591,6 +593,7 @@
 
 <div id="toast-error" class="toast" hidden></div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="auth.js"></script>
 <script src="app.js"></script>
 </body>

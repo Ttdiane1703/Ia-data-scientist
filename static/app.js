@@ -128,11 +128,13 @@ function toast(message) {
 }
 
 // ----------------------------------------------------------------
-// 1. UPLOAD
+// 1. UPLOAD — CSV, EXCEL (.xlsx / .xls) OU JSON
 // ----------------------------------------------------------------
 
 const dropzone = el("dropzone");
 const fileInput = el("file-input");
+
+const EXTENSIONS_ACCEPTEES = [".csv", ".xlsx", ".xls", ".json"];
 
 dropzone.addEventListener("click", () => fileInput.click());
 el("browse-btn").addEventListener("click", (e) => { e.stopPropagation(); fileInput.click(); });
@@ -165,7 +167,10 @@ async function traiterFichier(fichier) {
     return;
   }
 
-  if (!fichier.name.toLowerCase().endsWith(".csv")) {
+  const nomMinuscule = fichier.name.toLowerCase();
+  const extensionValide = EXTENSIONS_ACCEPTEES.some((ext) => nomMinuscule.endsWith(ext));
+
+  if (!extensionValide) {
     afficherErreurDataset(tr("dataset.error.notcsv"));
     return;
   }
@@ -563,9 +568,18 @@ function fmt(v) { return (v === null || v === undefined) ? "—" : Number(v).toF
 
 // ----------------------------------------------------------------
 // 8. EDA
+//
+// L'API renvoie désormais TOUTES les colonnes numériques
+// disponibles (jusqu'à 40). L'utilisateur choisit ensuite,
+// via des cases à cocher, lesquelles afficher — le filtrage se
+// fait entièrement côté client, sans nouvel appel réseau. Les
+// graphiques sont rendus avec Chart.js pour des animations
+// fluides (barres qui montent, tooltips interactifs).
 // ----------------------------------------------------------------
 
 let derniereEda = null;
+let variablesEdaSelectionnees = new Set();
+const chartInstances = {};
 
 async function chargerEda() {
   state.chargeEda = true;
@@ -573,42 +587,136 @@ async function chargerEda() {
     const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/eda`);
     const d = await reponse.json();
     derniereEda = d;
+    variablesEdaSelectionnees = new Set(d.distributions.map((x) => x.variable));
+    construireSelecteurVariables(d);
     rendreEda(d);
   } catch (err) {
     toast(tr("eda.error"));
   }
 }
 
+function construireSelecteurVariables(d) {
+  const box = el("eda-var-selector");
+  if (!box) return;
+
+  if (d.distributions.length === 0) {
+    box.innerHTML = "";
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="eda-selector-head">
+      <span class="eda-selector-label">${tr("eda.selector.label") || "Variables à visualiser"}</span>
+      <button type="button" class="eda-selector-toggle" id="eda-toggle-all">${tr("eda.selector.toggle") || "Tout / Rien"}</button>
+    </div>
+    <div class="eda-chip-list">
+      ${d.distributions.map((dist) => `
+        <label class="eda-chip">
+          <input type="checkbox" value="${escapeHtml(dist.variable)}" checked>
+          <span>${escapeHtml(dist.variable)}</span>
+        </label>
+      `).join("")}
+    </div>
+  `;
+
+  box.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) variablesEdaSelectionnees.add(cb.value);
+      else variablesEdaSelectionnees.delete(cb.value);
+      rendreEda(derniereEda);
+    });
+  });
+
+  let toutCoche = true;
+  el("eda-toggle-all")?.addEventListener("click", () => {
+    toutCoche = !toutCoche;
+    box.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      cb.checked = toutCoche;
+      if (toutCoche) variablesEdaSelectionnees.add(cb.value);
+      else variablesEdaSelectionnees.delete(cb.value);
+    });
+    rendreEda(derniereEda);
+  });
+}
+
 function rendreEda(d) {
   const wrap = el("eda-histograms");
   wrap.innerHTML = "";
-  d.distributions.forEach((dist, i) => {
-    const max = Math.max(...dist.counts, 1);
-    const bars = dist.counts.map((c) =>
-      `<div class="bar" style="height:${(c / max) * 100}%; background:${COULEURS[i % COULEURS.length]}"></div>`
-    ).join("");
+
+  const distributionsAffichees = d.distributions.filter((dist) =>
+    variablesEdaSelectionnees.has(dist.variable)
+  );
+
+  // Détruit les instances Chart.js précédentes pour éviter les
+  // fuites mémoire et les graphiques fantômes lors du re-rendu.
+  Object.keys(chartInstances).forEach((key) => {
+    chartInstances[key].destroy();
+    delete chartInstances[key];
+  });
+
+  distributionsAffichees.forEach((dist, i) => {
     const card = document.createElement("div");
     card.className = "chart-card";
-    card.innerHTML = `<h4>${tr("eda.distribution_of")} ${escapeHtml(dist.variable)}</h4><div class="bars">${bars}</div>`;
+    const canvasId = `eda-chart-${dist.variable.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    card.innerHTML = `<h4>${tr("eda.distribution_of")} ${escapeHtml(dist.variable)}</h4><canvas id="${canvasId}" height="180"></canvas>`;
     wrap.appendChild(card);
+
+    const ctx = document.getElementById(canvasId).getContext("2d");
+    const couleur = COULEURS[i % COULEURS.length];
+
+    chartInstances[canvasId] = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: dist.bins.map((b) => String(b)),
+        datasets: [{
+          label: dist.variable,
+          data: dist.counts,
+          backgroundColor: couleur,
+          borderRadius: 4,
+          borderSkipped: false,
+        }],
+      },
+      options: {
+        responsive: true,
+        animation: { duration: 900, easing: "easeOutQuart" },
+        plugins: {
+          legend: { display: false },
+          tooltip: { mode: "index", intersect: false },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
+          y: { beginAtZero: true, grid: { color: "rgba(255,255,255,0.06)" } },
+        },
+      },
+    });
   });
-  if (d.distributions.length === 0) {
+
+  if (distributionsAffichees.length === 0) {
     wrap.innerHTML = `<p class="muted-text">${tr("eda.no_numeric")}</p>`;
   }
 
   const corrBox = el("eda-correlation");
   if (d.correlations) {
-    const vars = d.correlations.variables;
-    let html = `<table class="data-table"><thead><tr><th></th>${vars.map((v) => `<th>${escapeHtml(v)}</th>`).join("")}</tr></thead><tbody>`;
-    d.correlations.matrice.forEach((ligne, i) => {
-      html += `<tr><th>${escapeHtml(vars[i])}</th>`;
-      ligne.forEach((val) => {
-        html += `<td class="corr-cell" style="background:${couleurCorrelation(val)}">${val ?? "—"}</td>`;
+    const variablesSelectionnees = d.correlations.variables.filter((v) =>
+      variablesEdaSelectionnees.has(v)
+    );
+    const indicesGardes = variablesSelectionnees.map((v) => d.correlations.variables.indexOf(v));
+
+    if (indicesGardes.length >= 2) {
+      let html = `<table class="data-table"><thead><tr><th></th>${variablesSelectionnees.map((v) => `<th>${escapeHtml(v)}</th>`).join("")}</tr></thead><tbody>`;
+      indicesGardes.forEach((i) => {
+        html += `<tr><th>${escapeHtml(d.correlations.variables[i])}</th>`;
+        indicesGardes.forEach((j) => {
+          const val = d.correlations.matrice[i][j];
+          html += `<td class="corr-cell" style="background:${couleurCorrelation(val)}">${val ?? "—"}</td>`;
+        });
+        html += `</tr>`;
       });
-      html += `</tr>`;
-    });
-    html += `</tbody></table>`;
-    corrBox.innerHTML = html;
+      html += `</tbody></table>`;
+      corrBox.innerHTML = html;
+    } else {
+      corrBox.innerHTML = `<p class="muted-text">${tr("eda.not_enough_for_corr")}</p>`;
+    }
   } else {
     corrBox.innerHTML = `<p class="muted-text">${tr("eda.not_enough_for_corr")}</p>`;
   }
