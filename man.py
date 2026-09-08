@@ -126,6 +126,19 @@ RANDOM_STATE = 42
 
 REPORTS_DIR = "reports"
 
+# ----------------------------------------------------------------
+# GARDE-FOU ANTI-COLONNE-IDENTIFIANT (choix manuel/auto de la cible)
+#
+# Si une colonne non numérique a plus de ce ratio de valeurs
+# uniques, elle ressemble à un identifiant (ID, email, référence
+# unique...) plutôt qu'à une variable à prédire. La traiter comme
+# une cible de classification ferait exploser le nombre de classes
+# et bloquerait la validation du dataset à tort, même sur un très
+# gros volume de données (des millions de lignes).
+# ----------------------------------------------------------------
+
+RATIO_UNICITE_MAX_CIBLE = 0.50
+
 
 # ================================================================
 # SUIVI DE PROGRESSION (POUR L'API WEB)
@@ -780,6 +793,17 @@ def detecter_probleme(df):
 #
 # Le type de problème (classification / régression) est ensuite
 # déterminé à partir de cette cible choisie.
+#
+# CORRECTIF : un garde-fou anti-colonne-identifiant a été ajouté
+# ci-dessous. Sans lui, une colonne cible de type ID (email,
+# référence, identifiant client...) — qu'elle vienne de la
+# suggestion automatique ou d'un choix manuel — est traitée comme
+# une classification avec autant de classes que de lignes quasi
+# uniques. Sur un très gros dataset (plusieurs millions de lignes),
+# cela fait exploser artificiellement le nombre de classes, et
+# l'étape 5ter (validation du dataset) bloque alors le pipeline à
+# tort en pensant que le dataset est "trop petit par classe", alors
+# que le vrai problème est le choix de la colonne cible.
 # ================================================================
 
 def choisir_cible_manuellement(
@@ -825,38 +849,88 @@ def choisir_cible_manuellement(
 
     if not reponse:
 
-        return target_auto, problem_type_auto
-
-    # Sélection par numéro
-    if reponse.isdigit():
-
-        index = int(reponse)
-
-        if index < 0 or index >= len(colonnes):
-
-            raise ValueError(
-                f"Numéro de colonne invalide : {index}"
-            )
-
-        target = colonnes[index]
+        target = target_auto
 
     else:
 
-        # Sélection par nom
-        if reponse not in colonnes:
+        # Sélection par numéro
+        if reponse.isdigit():
 
-            raise ValueError(
-                f"La colonne '{reponse}' n'existe pas "
-                f"dans le dataset."
-            )
+            index = int(reponse)
 
-        target = reponse
+            if index < 0 or index >= len(colonnes):
+
+                raise ValueError(
+                    f"Numéro de colonne invalide : {index}"
+                )
+
+            target = colonnes[index]
+
+        else:
+
+            # Sélection par nom
+            if reponse not in colonnes:
+
+                raise ValueError(
+                    f"La colonne '{reponse}' n'existe pas "
+                    f"dans le dataset."
+                )
+
+            target = reponse
+
+    if target is None:
+
+        raise ValueError(
+            "Aucune colonne cible n'a pu être déterminée "
+            "(ni automatiquement, ni manuellement)."
+        )
 
     # ------------------------------------------------------------
     # DETERMINATION DU TYPE DE PROBLEME POUR LA CIBLE CHOISIE
     # ------------------------------------------------------------
 
     serie = df[target]
+
+    # --------------------------------------------------------
+    # GARDE-FOU : colonne identifiant (ID) détectée
+    #
+    # Si la quasi-totalité des valeurs d'une colonne NON
+    # numérique sont uniques, ce n'est presque jamais une
+    # variable à prédire (email, ID client, référence,
+    # numéro de commande...). La traiter en classification
+    # ferait exploser le nombre de classes et bloquerait la
+    # validation du dataset à tort, même sur un très gros
+    # dataset (des millions de lignes).
+    #
+    # On ne l'applique volontairement qu'aux colonnes NON
+    # numériques : une colonne numérique à forte unicité
+    # (ex : un prix, un âge en années/mois) est déjà bien
+    # gérée par la branche régression juste en dessous.
+    # --------------------------------------------------------
+
+    n_lignes = len(serie)
+
+    taux_unicite = (
+        serie.nunique(dropna=False) / n_lignes
+        if n_lignes
+        else 0
+    )
+
+    if (
+        not pd.api.types.is_numeric_dtype(serie)
+        and taux_unicite > RATIO_UNICITE_MAX_CIBLE
+    ):
+
+        raise ValueError(
+            f"La colonne '{target}' contient "
+            f"{serie.nunique(dropna=False)} valeurs quasi "
+            f"toutes uniques ({taux_unicite:.0%} du dataset) : "
+            f"elle ressemble à une colonne identifiant (ID, "
+            f"email, référence, numéro de commande...) plutôt "
+            f"qu'à une variable à prédire. Choisissez une autre "
+            f"colonne cible représentant une vraie catégorie "
+            f"métier (ex : statut, segment, type)."
+        )
 
     if pd.api.types.is_numeric_dtype(serie) and serie.nunique() > 15:
 
@@ -4857,10 +4931,14 @@ def executer_pipeline(
     except Exception as e:
 
         afficher_erreur(
-            "Le choix manuel de la cible a rencontré un problème. "
-            "La suggestion automatique est conservée.",
+            "Le choix de la cible a rencontré un problème "
+            "(éventuellement une colonne identifiant détectée). "
+            "Le pipeline s'arrête pour éviter un blocage trompeur "
+            "plus loin dans la validation du dataset.",
             e
         )
+
+        return
 
     # ------------------------------------------------------------
     # ETAPE 5ter — validation de la taille / qualité du dataset
