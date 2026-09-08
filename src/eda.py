@@ -4,6 +4,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+# Au-delà de ce nombre de lignes, les graphiques sont générés à
+# partir d'un échantillon représentatif plutôt que du dataset
+# complet. Les statistiques (moyenne, médiane, corrélations, ...)
+# restent, elles, toujours calculées sur le dataset complet.
+SEUIL_ECHANTILLONNAGE_GRAPHIQUES = 10000
+
+TAILLE_ECHANTILLON_GRAPHIQUES = 5000
+
+
 class AutomaticEDA:
 
     def __init__(self, output_dir="reports/eda"):
@@ -21,7 +30,36 @@ class AutomaticEDA:
         print(f"   Colonnes : {df.shape[1]}")
 
         # ------------------------------------------------
-        # MISSING VALUES
+        # ECHANTILLON REPRESENTATIF POUR LES GRAPHIQUES
+        #
+        # Dataset complet -> statistiques globales -> échantillon
+        # représentatif pour les graphiques lourds ->
+        # visualisations. Les statistiques ci-dessous sont TOUJOURS
+        # calculées sur df (dataset complet) ; seule la génération
+        # des graphiques utilise df_graphiques.
+        # ------------------------------------------------
+
+        if len(df) > SEUIL_ECHANTILLONNAGE_GRAPHIQUES:
+
+            df_graphiques = df.sample(
+                n=TAILLE_ECHANTILLON_GRAPHIQUES,
+                random_state=42
+            )
+
+            print(
+                f"\nℹ️ Dataset volumineux ({len(df)} lignes) : "
+                f"les graphiques utilisent un échantillon "
+                f"représentatif de {len(df_graphiques)} lignes. "
+                f"Les statistiques restent calculées sur "
+                f"l'ensemble du dataset."
+            )
+
+        else:
+
+            df_graphiques = df
+
+        # ------------------------------------------------
+        # MISSING VALUES (dataset complet)
         # ------------------------------------------------
 
         print("\n❗ VALEURS MANQUANTES")
@@ -36,7 +74,7 @@ class AutomaticEDA:
                 print(f"   {col} : {value}")
 
         # ------------------------------------------------
-        # NUMERIC
+        # NUMERIC (dataset complet)
         # ------------------------------------------------
 
         print("\n🔢 VARIABLES NUMÉRIQUES")
@@ -53,7 +91,7 @@ class AutomaticEDA:
             print(f"      Max : {numeric[col].max()}")
 
         # ------------------------------------------------
-        # CATEGORICAL
+        # CATEGORICAL (dataset complet)
         # ------------------------------------------------
 
         print("\n🔤 VARIABLES CATÉGORIELLES")
@@ -70,7 +108,7 @@ class AutomaticEDA:
             )
 
         # ------------------------------------------------
-        # OUTLIERS
+        # OUTLIERS (dataset complet)
         # ------------------------------------------------
 
         print("\n⚠️ OUTLIERS")
@@ -98,7 +136,7 @@ class AutomaticEDA:
                 )
 
         # ------------------------------------------------
-        # CORRELATIONS
+        # CORRELATIONS (dataset complet)
         # ------------------------------------------------
 
         print("\n🔗 CORRÉLATIONS")
@@ -123,19 +161,21 @@ class AutomaticEDA:
                         )
 
         # ------------------------------------------------
-        # GRAPHS
+        # GRAPHS (échantillon représentatif si gros dataset)
         # ------------------------------------------------
 
         print("\n📈 GÉNÉRATION DES GRAPHIQUES")
 
-        for col in numeric.columns:
+        n_colonnes_numeriques = len(numeric.columns)
+
+        for index, col in enumerate(numeric.columns, start=1):
 
             try:
 
                 plt.figure(figsize=(8, 5))
 
                 plt.hist(
-                    df[col].dropna(),
+                    df_graphiques[col].dropna(),
                     bins=30
                 )
 
@@ -158,6 +198,18 @@ class AutomaticEDA:
                     f"pour {col}: {e}"
                 )
 
+            # Progression : évite un silence total pendant les
+            # traitements longs sur les datasets avec beaucoup de
+            # colonnes numériques.
+            if n_colonnes_numeriques >= 20 and (
+                index % 10 == 0 or index == n_colonnes_numeriques
+            ):
+
+                print(
+                    f"   ... {index}/{n_colonnes_numeriques} "
+                    f"graphiques générés"
+                )
+
         print(
             f"   📁 Graphiques : "
             f"{self.output_dir}"
@@ -170,5 +222,9 @@ class AutomaticEDA:
             "columns": len(df.columns),
             "numeric_columns": list(numeric.columns),
             "categorical_columns": list(categorical.columns),
-            "missing_values": missing.to_dict()
+            "missing_values": missing.to_dict(),
+            "echantillon_graphiques": (
+                len(df_graphiques) if len(df_graphiques) != len(df)
+                else None
+            )
         }

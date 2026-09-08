@@ -15,13 +15,15 @@ class ModelOptimizer:
         problem_type,
         n_trials=10,
         cv=3,
-        random_state=42
+        random_state=42,
+        timeout=None
     ):
 
         self.problem_type = problem_type
         self.n_trials = n_trials
         self.cv = cv
         self.random_state = random_state
+        self.timeout = timeout
 
         self.factory = ModelFactory()
 
@@ -463,6 +465,12 @@ class ModelOptimizer:
             f"🔄 Trials : {self.n_trials}"
         )
 
+        if self.timeout:
+
+            print(
+                f"⏱️ Timeout : {self.timeout}s"
+            )
+
         # -----------------------------------------------------
         # TARGET
         # -----------------------------------------------------
@@ -658,18 +666,24 @@ class ModelOptimizer:
         study.optimize(
             objective,
             n_trials=self.n_trials,
+            timeout=self.timeout,
             show_progress_bar=False
         )
 
         # -----------------------------------------------------
         # VERIFICATION
+        #
+        # Avec un timeout, il est possible qu'Optuna s'arrête
+        # avant même d'avoir terminé un seul trial (dataset très
+        # gros + modèle lent). Dans ce cas, on ne fait pas planter
+        # tout l'AutoML : on ignore simplement ce modèle.
         # -----------------------------------------------------
 
-        if valid_trials == 0:
+        if valid_trials == 0 or len(study.trials) == 0:
 
             raise RuntimeError(
                 f"Aucun trial valide pour "
-                f"{model_name}."
+                f"{model_name} (timeout ou erreurs répétées)."
             )
 
         # -----------------------------------------------------

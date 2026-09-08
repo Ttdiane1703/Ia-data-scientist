@@ -45,6 +45,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import os
+import gc
 import traceback
 import warnings
 
@@ -94,6 +95,23 @@ try:
     from src.auto_report import AutoReport
 except Exception:
     AutoReport = None
+
+
+# ================================================================
+# ROBUSTESSE : VALIDATION DU DATASET + DATA LEAKAGE
+# ================================================================
+#
+# Ces deux modules sont volontairement importés sans try/except
+# "silencieux" : ce sont des garde-fous de fiabilité (chantiers
+# prioritaires), leur absence doit être visible immédiatement
+# plutôt que de dégrader silencieusement le pipeline.
+# ================================================================
+
+from src.dataset_validator import (
+    DatasetValidator,
+    formater_panneau_validation,
+)
+from src.leakage_detector import DataLeakageDetector
 
 
 # ================================================================
@@ -868,6 +886,59 @@ def choisir_cible_manuellement(
 
 
 # ================================================================
+# ETAPE 5ter — VALIDATION DE LA TAILLE / QUALITE DU DATASET
+# ================================================================
+#
+# Vérifie, AVANT de préparer les données et de lancer le train/test
+# split, que le dataset contient assez d'observations (et assez
+# d'observations par classe) pour permettre une séparation
+# entraînement/test fiable.
+#
+# Ne fait jamais planter le pipeline : en cas de dataset trop
+# petit, retourne un diagnostic clair permettant à l'appelant
+# d'arrêter proprement (voir executer_pipeline).
+# ================================================================
+
+def valider_taille_dataset(df, target, problem_type):
+
+    afficher_titre(
+        "5ter",
+        "🔍 VALIDATION DE LA TAILLE DU DATASET"
+    )
+
+    validateur = DatasetValidator(test_size=TEST_SIZE)
+
+    diagnostic = validateur.validate(df, target, problem_type)
+
+    panneau = formater_panneau_validation(diagnostic)
+
+    print(f"\n{panneau}")
+
+    if diagnostic["bloquant"]:
+
+        print(
+            "\n❌ Le pipeline ne peut pas continuer avec ce "
+            "dataset."
+        )
+
+    elif diagnostic.get("messages"):
+
+        print(
+            "\n⚠️ Le pipeline continue, mais certains résultats "
+            "seront à interpréter avec prudence."
+        )
+
+    else:
+
+        print(
+            "\n✅ Dataset validé : la séparation entraînement/test "
+            "peut se poursuivre normalement."
+        )
+
+    return diagnostic
+
+
+# ================================================================
 # ETAPE 6 — PREPARATION DES DONNEES
 # ================================================================
 
@@ -906,6 +977,96 @@ def preparer_donnees(
     )
 
     return X, y
+
+
+# ================================================================
+# ETAPE 6bis — DETECTION DU DATA LEAKAGE
+# ================================================================
+#
+# Analyse chaque variable de X vis-à-vis de y pour détecter une
+# éventuelle fuite de données (colonne identique/dérivée de la
+# cible, corrélation anormale, reconstruction quasi déterministe,
+# fuite temporelle, performance globale suspecte). Les colonnes à
+# risque CRITIQUE ou ÉLEVÉ sont exclues automatiquement avant le
+# Feature Engineering.
+#
+# Cette étape ne fait jamais planter le pipeline : en cas d'échec
+# interne, elle renvoie un diagnostic vide et laisse X inchangé.
+# ================================================================
+
+def detecter_data_leakage(X, y, target, date_cols=None):
+
+    afficher_titre(
+        "6bis",
+        "🚨 DÉTECTION DU DATA LEAKAGE"
+    )
+
+    detecteur = DataLeakageDetector()
+
+    diagnostic = detecteur.detect(
+        X,
+        y,
+        target_name=target,
+        date_cols=date_cols,
+    )
+
+    print(f"\n{diagnostic['resume']}")
+
+    for colonne_diag in diagnostic.get("colonnes_a_risque", []):
+
+        print(
+            f"\n  • Colonne : {colonne_diag['colonne']}"
+        )
+
+        for raison in colonne_diag["raisons"]:
+
+            print(f"      - Raison : {raison}")
+
+        print(
+            f"      - Niveau de risque : "
+            f"{colonne_diag['niveau_risque']}"
+        )
+
+        print(
+            f"      - Recommandation : "
+            f"{colonne_diag['recommandation']}"
+        )
+
+        print(
+            f"      - Exclusion automatique : "
+            f"{'oui' if colonne_diag['exclue_automatiquement'] else 'non'}"
+        )
+
+    if diagnostic.get("performance_anormale"):
+
+        print(
+            f"\n⚠️ {diagnostic['performance_anormale']['message']}"
+        )
+
+        print(
+            f"   Variables suspectes : "
+            f"{diagnostic['performance_anormale']['features_suspectes']}"
+        )
+
+    X_filtre = detecteur.filtrer(X, diagnostic)
+
+    colonnes_exclues = diagnostic.get("colonnes_exclues", [])
+
+    if colonnes_exclues:
+
+        print(
+            f"\n🧹 {len(colonnes_exclues)} colonne(s) exclue(s) "
+            f"automatiquement avant l'entraînement : "
+            f"{colonnes_exclues}"
+        )
+
+    else:
+
+        print(
+            "\n✅ Aucune colonne exclue automatiquement."
+        )
+
+    return X_filtre, diagnostic
 
 
 # ================================================================
@@ -1024,13 +1185,41 @@ def effectuer_feature_engineering(
 def separer_train_test(
     X,
     y,
-    problem_type
+    problem_type,
+    diagnostic_validation=None
 ):
 
     afficher_titre(
         8,
         "✂️ SÉPARATION ENTRAÎNEMENT / TEST"
     )
+
+    # ------------------------------------------------------------
+    # Utilise le diagnostic de l'étape 5ter si disponible :
+    # test_size éventuellement ajusté, et confirmation que la
+    # stratification est réalisable sans faire planter sklearn.
+    # ------------------------------------------------------------
+
+    test_size_effectif = TEST_SIZE
+
+    stratification_possible = problem_type.startswith(
+        "classification"
+    )
+
+    if diagnostic_validation is not None:
+
+        test_size_effectif = diagnostic_validation.get(
+            "recommended_test_size", TEST_SIZE
+        )
+
+        if diagnostic_validation.get("can_stratify") is False:
+
+            stratification_possible = False
+
+            print(
+                "\nℹ️ Stratification désactivée pour cette "
+                "séparation (classe(s) trop peu représentée(s))."
+            )
 
     trainer = ModelTrainer()
 
@@ -1073,9 +1262,7 @@ def separer_train_test(
 
         stratify = None
 
-        if problem_type.startswith(
-            "classification"
-        ):
+        if stratification_possible:
 
             try:
 
@@ -1085,13 +1272,36 @@ def separer_train_test(
 
                 stratify = None
 
-        resultat = train_test_split(
-            X,
-            y,
-            test_size=TEST_SIZE,
-            random_state=RANDOM_STATE,
-            stratify=stratify
-        )
+        try:
+
+            resultat = train_test_split(
+                X,
+                y,
+                test_size=test_size_effectif,
+                random_state=RANDOM_STATE,
+                stratify=stratify
+            )
+
+        except ValueError as e:
+
+            # Filet de sécurité final : si la stratification
+            # échoue malgré tout (ex. diagnostic non fourni par
+            # l'appelant), on retente sans stratifier plutôt que
+            # de faire planter tout le pipeline.
+
+            print(
+                f"\n⚠️ Séparation stratifiée impossible "
+                f"({e}). Nouvelle tentative sans "
+                f"stratification."
+            )
+
+            resultat = train_test_split(
+                X,
+                y,
+                test_size=test_size_effectif,
+                random_state=RANDOM_STATE,
+                stratify=None
+            )
 
     # ------------------------------------------------------------
     # NORMALISATION DU FORMAT
@@ -1163,6 +1373,124 @@ def preparer_modeles():
 
 
 # ================================================================
+# BUDGET DE CALCUL ADAPTATIF (AUTOML)
+# ================================================================
+#
+# Adapte automatiquement l'effort de calcul AutoML à la taille du
+# dataset, pour privilégier la stabilité et le temps de réponse
+# plutôt qu'une optimisation exhaustive sur les gros volumes.
+#
+#   Petit dataset (≤ 1 000 lignes)   → exploration plus large
+#   Dataset moyen (≤ 10 000 lignes)  → exploration normale
+#   Gros dataset (≤ 50 000 lignes)   → exploration limitée
+#   Très gros dataset (> 50 000)     → budget fortement contrôlé
+# ================================================================
+
+def calculer_budget_calcul(n_rows, n_features, n_trials_demande):
+
+    if n_rows <= 1000:
+
+        categorie = "petit dataset"
+
+        n_trials = max(n_trials_demande, 15)
+        cv = 5
+        timeout_par_modele = 180
+        taille_echantillon_recherche = None
+        modeles_exclus = []
+
+    elif n_rows <= 10000:
+
+        categorie = "dataset moyen"
+
+        n_trials = n_trials_demande
+        cv = 3
+        timeout_par_modele = 120
+        taille_echantillon_recherche = None
+        modeles_exclus = []
+
+    elif n_rows <= 50000:
+
+        categorie = "gros dataset"
+
+        n_trials = max(5, min(n_trials_demande, 8))
+        cv = 3
+        timeout_par_modele = 90
+        taille_echantillon_recherche = 15000
+        modeles_exclus = []
+
+    else:
+
+        categorie = "très gros dataset"
+
+        n_trials = max(5, min(n_trials_demande, 5))
+        cv = 3
+        timeout_par_modele = 60
+        taille_echantillon_recherche = 20000
+
+        # GradientBoosting (sklearn) n'est pas parallélisé et
+        # devient nettement le modèle le plus lent au-delà de
+        # quelques dizaines de milliers de lignes.
+        modeles_exclus = ["GradientBoosting"]
+
+    return {
+        "categorie": categorie,
+        "n_rows": n_rows,
+        "n_features": n_features,
+        "n_trials": n_trials,
+        "cv": cv,
+        "timeout_par_modele": timeout_par_modele,
+        "taille_echantillon_recherche": taille_echantillon_recherche,
+        "modeles_exclus": modeles_exclus,
+    }
+
+
+def echantillonner_pour_recherche(
+    X,
+    y,
+    problem_type,
+    taille_max
+):
+    """
+    Construit un sous-échantillon représentatif de X/y, utilisé
+    uniquement pour la RECHERCHE d'hyperparamètres AutoML. Le
+    modèle final est toujours entraîné sur le dataset complet.
+
+    Pour la classification, l'échantillon est stratifié afin de
+    conserver la répartition des classes (y compris pour les
+    datasets déséquilibrés).
+    """
+
+    n_rows = len(X)
+
+    if n_rows <= taille_max:
+        return X, y
+
+    if str(problem_type).startswith("classification"):
+
+        fraction = taille_max / n_rows
+
+        index_echantillon = (
+            y.groupby(y)
+            .apply(
+                lambda groupe: groupe.sample(
+                    n=max(1, int(round(len(groupe) * fraction))),
+                    random_state=RANDOM_STATE
+                )
+            )
+            .index.get_level_values(-1)
+        )
+
+    else:
+
+        index_echantillon = y.sample(
+            n=taille_max,
+            random_state=RANDOM_STATE
+        ).index
+
+    return X.loc[index_echantillon], y.loc[index_echantillon]
+
+
+# ================================================================
 # ETAPE 10 — AUTO ML
 # ================================================================
 
@@ -1179,28 +1507,54 @@ def lancer_automl(
         "🧠 AUTO ML ET OPTIMISATION"
     )
 
-    print(
-        f"\nType de problème : "
-        f"{problem_type}"
+    n_rows, n_features = X_train.shape
+
+    budget = calculer_budget_calcul(
+        n_rows,
+        n_features,
+        N_TRIALS
     )
 
     print(
-        f"Trials : {N_TRIALS}"
+        f"\n📦 Catégorie détectée : {budget['categorie']} "
+        f"({n_rows} lignes × {n_features} colonnes)"
     )
 
-    # IMPORTANT :
-    # problem_type doit être fourni au constructeur.
+    print(
+        f"🔄 Trials par modèle : {budget['n_trials']}"
+    )
+
+    print(
+        f"🧪 Plis de validation croisée : {budget['cv']}"
+    )
+
+    print(
+        f"⏱️ Timeout par modèle : {budget['timeout_par_modele']}s"
+    )
+
+    X_recherche, y_recherche = echantillonner_pour_recherche(
+        X_train,
+        y_train,
+        problem_type,
+        budget["taille_echantillon_recherche"]
+        or n_rows
+    )
 
     automl = AutoML(
         problem_type=problem_type,
-        n_trials=N_TRIALS
+        n_trials=budget["n_trials"],
+        cv=budget["cv"],
+        timeout_par_modele=budget["timeout_par_modele"],
+        modeles_exclus=budget["modeles_exclus"]
     )
 
     resultats = automl.run(
         X_train,
         y_train,
         X_test,
-        y_test
+        y_test,
+        X_recherche=X_recherche,
+        y_recherche=y_recherche
     )
 
     champion = automl.get_champion()
@@ -4333,6 +4687,10 @@ def executer_pipeline(
 
     features_candidates = None
 
+    diagnostic_validation = None
+
+    leakage_report = None
+
     X = None
 
     y = None
@@ -4455,6 +4813,11 @@ def executer_pipeline(
             e
         )
 
+    # Libération mémoire : l'EDA a pu créer des objets
+    # matplotlib/pandas temporaires volumineux (échantillons,
+    # figures). On les libère explicitement avant de continuer.
+    gc.collect()
+
     # ============================================================
     # ETAPE 5
     # ============================================================
@@ -4499,6 +4862,92 @@ def executer_pipeline(
             e
         )
 
+    # ------------------------------------------------------------
+    # ETAPE 5ter — validation de la taille / qualité du dataset
+    # ------------------------------------------------------------
+
+    try:
+
+        diagnostic_validation = valider_taille_dataset(
+            df_clean,
+            target,
+            problem_type
+        )
+
+    except Exception as e:
+
+        afficher_erreur(
+            "La validation du dataset a rencontré un problème. "
+            "Le pipeline continue avec les valeurs par défaut.",
+            e
+        )
+
+        diagnostic_validation = None
+
+    if diagnostic_validation is not None and diagnostic_validation.get(
+        "bloquant"
+    ):
+
+        print(
+            "\n" + "=" * 70
+        )
+
+        print(
+            "ARRÊT PROPRE DU PIPELINE — DATASET TROP PETIT"
+        )
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            "\nDataset validation : ❌"
+        )
+
+        print(
+            "Train/Test          : non exécuté"
+        )
+
+        print(
+            "AutoML               : non exécuté"
+        )
+
+        print(
+            "Explicabilité        : non exécutée"
+        )
+
+        print(
+            "\nAucun crash serveur : les résultats déjà calculés "
+            "(profilage, nettoyage, EDA) restent disponibles."
+        )
+
+        return _rendre_json_safe({
+            "succes": False,
+            "arret_propre": True,
+            "raison": "dataset_trop_petit",
+            "target": target,
+            "problem_type": problem_type,
+            "validation_dataset": diagnostic_validation,
+            "dataset_initial": {
+                "lignes": int(df_initial.shape[0]),
+                "colonnes": int(df_initial.shape[1])
+            },
+            "dataset_nettoye": {
+                "lignes": int(df_clean.shape[0]),
+                "colonnes": int(df_clean.shape[1])
+            },
+            "etapes_executees": {
+                "import": True,
+                "data_quality": True,
+                "eda": eda_result is not None,
+                "dataset_validation": False,
+                "feature_engineering": False,
+                "train_test": False,
+                "automl": False,
+                "explicabilite": False
+            }
+        })
+
     # ============================================================
     # ETAPE 6
     # ============================================================
@@ -4518,6 +4967,29 @@ def executer_pipeline(
         )
 
         return
+
+    # ------------------------------------------------------------
+    # ETAPE 6bis — détection du data leakage
+    # ------------------------------------------------------------
+
+    try:
+
+        X, leakage_report = detecter_data_leakage(
+            X,
+            y,
+            target
+        )
+
+    except Exception as e:
+
+        afficher_erreur(
+            "La détection du data leakage a rencontré un "
+            "problème. Le pipeline continue sans exclusion "
+            "automatique.",
+            e
+        )
+
+        leakage_report = None
 
     # ============================================================
     # ETAPE 7
@@ -4542,6 +5014,12 @@ def executer_pipeline(
 
         return
 
+    # Libération mémoire : X (avant feature engineering) n'est
+    # plus nécessaire, seul X_features est utilisé par la suite.
+    X = None
+
+    gc.collect()
+
     # ============================================================
     # ETAPE 8
     # ============================================================
@@ -4556,7 +5034,8 @@ def executer_pipeline(
         ) = separer_train_test(
             X_features,
             y,
-            problem_type
+            problem_type,
+            diagnostic_validation=diagnostic_validation
         )
 
     except Exception as e:
@@ -4609,6 +5088,10 @@ def executer_pipeline(
             "L'AutoML a rencontré un problème.",
             e
         )
+
+    # Libération mémoire : Optuna et les essais AutoML non retenus
+    # peuvent accumuler des objets modèles volumineux en mémoire.
+    gc.collect()
 
     # ============================================================
     # ETAPE 11
@@ -4875,6 +5358,8 @@ def executer_pipeline(
             and hasattr(X_features, "shape")
             else None
         ),
+        "validation_dataset": diagnostic_validation,
+        "data_leakage": leakage_report,
         "champion": (
             {
                 "modele": champion.get("model"),

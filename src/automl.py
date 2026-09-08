@@ -7,7 +7,10 @@ class AutoML:
     def __init__(
         self,
         problem_type,
-        n_trials=10
+        n_trials=10,
+        cv=3,
+        timeout_par_modele=None,
+        modeles_exclus=None
     ):
         """
         Initialise le système AutoML.
@@ -22,10 +25,26 @@ class AutoML:
 
         n_trials : int
             Nombre d'essais Optuna par modèle.
+
+        cv : int
+            Nombre de plis de validation croisée pendant la
+            recherche d'hyperparamètres.
+
+        timeout_par_modele : float | None
+            Budget de temps (en secondes) accordé à l'optimisation
+            de CHAQUE modèle. Permet de garder un temps de réponse
+            maîtrisé sur les gros datasets, quel que soit n_trials.
+
+        modeles_exclus : list[str] | None
+            Modèles à ne pas tester (ex. les plus lents, sur de
+            très gros volumes).
         """
 
         self.problem_type = problem_type
         self.n_trials = n_trials
+        self.cv = cv
+        self.timeout_par_modele = timeout_par_modele
+        self.modeles_exclus = set(modeles_exclus or [])
 
         self.factory = ModelFactory()
 
@@ -41,12 +60,28 @@ class AutoML:
         X_train,
         y_train,
         X_test=None,
-        y_test=None
+        y_test=None,
+        X_recherche=None,
+        y_recherche=None
     ):
         """
         Lance automatiquement tous les modèles disponibles,
         optimise leurs hyperparamètres et sélectionne le champion.
+
+        X_recherche / y_recherche : sous-échantillon optionnel
+        utilisé UNIQUEMENT pour la recherche d'hyperparamètres
+        (plus rapide sur les gros datasets). Le modèle final est
+        toujours entraîné sur X_train complet, en dehors de cette
+        classe (voir man.py).
         """
+
+        X_recherche = (
+            X_recherche if X_recherche is not None else X_train
+        )
+
+        y_recherche = (
+            y_recherche if y_recherche is not None else y_train
+        )
 
         print("\n")
         print("=" * 70)
@@ -61,17 +96,34 @@ class AutoML:
             f"Nombre de trials par modèle : {self.n_trials}"
         )
 
+        if len(X_recherche) != len(X_train):
+
+            print(
+                f"🎯 Recherche d'hyperparamètres sur un "
+                f"échantillon de {len(X_recherche)} lignes "
+                f"(dataset complet : {len(X_train)} lignes)."
+            )
+
         # =====================================================
         # RECUPERATION DES MODELES
         # =====================================================
 
-        models = self.factory.get_models(
-            self.problem_type
-        )
+        models = [
+            nom
+            for nom in self.factory.get_models(self.problem_type)
+            if nom not in self.modeles_exclus
+        ]
 
         print(
             f"Nombre de modèles disponibles : {len(models)}"
         )
+
+        if self.modeles_exclus:
+
+            print(
+                f"Modèles exclus pour ce volume de données : "
+                f"{sorted(self.modeles_exclus)}"
+            )
 
         if not models:
 
@@ -106,13 +158,14 @@ class AutoML:
                 optimizer = ModelOptimizer(
                     problem_type=self.problem_type,
                     n_trials=self.n_trials,
-                    cv=3
+                    cv=self.cv,
+                    timeout=self.timeout_par_modele
                 )
 
                 result = optimizer.optimize(
                     model_name,
-                    X_train,
-                    y_train
+                    X_recherche,
+                    y_recherche
                 )
 
                 if result is None:
