@@ -30,6 +30,21 @@ séparation entraînement/test fiable.
 import pandas as pd
 
 
+# Au-delà de ce nombre de catégories distinctes, une classification
+# n'a plus vraiment de sens statistique (trop peu d'exemples par
+# classe, quel que soit la taille du dataset). Une colonne cible
+# choisie manuellement avec, par exemple, 4 500 valeurs différentes
+# (un nom de réalisateur, un titre, un identifiant...) doit être
+# refusée avec un message clair plutôt que de produire des milliers
+# de classes à une seule observation.
+MAX_CLASSES_CLASSIFICATION = 50
+
+# Au-delà de ce ratio (nombre de classes / nombre de lignes), la
+# colonne ressemble à un identifiant ou à du texte libre plutôt
+# qu'à une catégorie à prédire.
+RATIO_IDENTIFIANT = 0.5
+
+
 # Seuils par défaut. Volontairement prudents : en dessous, une
 # séparation train/test n'a statistiquement aucun sens.
 MIN_TOTAL_ROWS = 10
@@ -259,6 +274,71 @@ class DatasetValidator:
                 "Vérifiez la colonne cible choisie, ou ajoutez des "
                 "observations couvrant d'autres classes."
             )
+
+            return resultat
+
+        # ------------------------------------------------------------
+        # Cible avec beaucoup trop de catégories pour une
+        # classification fiable (identifiant, texte libre, nom
+        # propre à très forte cardinalité...). Ce n'est PAS un
+        # problème de taille de dataset : même un dataset énorme ne
+        # rendrait pas cette colonne exploitable telle quelle.
+        # ------------------------------------------------------------
+
+        if n_classes > MAX_CLASSES_CLASSIFICATION:
+
+            ratio_unique = n_classes / n_rows if n_rows else 1
+
+            resultat.update(
+                {
+                    "ok": False,
+                    "bloquant": True,
+                    "n_classes": n_classes,
+                    "dataset_filtre": df_travail,
+                }
+            )
+
+            if ratio_unique >= RATIO_IDENTIFIANT:
+
+                resultat["titre"] = (
+                    "⚠️ Cette colonne ressemble à un identifiant, "
+                    "pas à une catégorie"
+                )
+
+                resultat["messages"].append(
+                    f"La colonne cible '{target}' contient "
+                    f"{n_classes} valeurs quasiment toutes "
+                    f"différentes pour {n_rows} lignes. Cela "
+                    f"ressemble à un identifiant, un titre ou un "
+                    f"texte libre, pas à une catégorie à prédire."
+                )
+
+                resultat["recommandation"] = (
+                    "Choisissez une colonne avec un nombre limité de "
+                    "valeurs qui se répètent, ou une colonne "
+                    "numérique pour une régression."
+                )
+
+            else:
+
+                resultat["titre"] = (
+                    "⚠️ Trop de catégories pour une classification "
+                    "fiable"
+                )
+
+                resultat["messages"].append(
+                    f"La colonne cible '{target}' contient "
+                    f"{n_classes} catégories différentes, ce qui est "
+                    f"trop élevé pour une classification fiable "
+                    f"(maximum recommandé : "
+                    f"{MAX_CLASSES_CLASSIFICATION})."
+                )
+
+                resultat["recommandation"] = (
+                    "Regroupez les catégories les plus rares avant "
+                    "l'entraînement, ou choisissez une autre colonne "
+                    "cible."
+                )
 
             return resultat
 
