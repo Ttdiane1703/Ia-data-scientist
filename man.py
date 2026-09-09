@@ -126,19 +126,6 @@ RANDOM_STATE = 42
 
 REPORTS_DIR = "reports"
 
-# ----------------------------------------------------------------
-# GARDE-FOU ANTI-COLONNE-IDENTIFIANT (choix manuel/auto de la cible)
-#
-# Si une colonne non numérique a plus de ce ratio de valeurs
-# uniques, elle ressemble à un identifiant (ID, email, référence
-# unique...) plutôt qu'à une variable à prédire. La traiter comme
-# une cible de classification ferait exploser le nombre de classes
-# et bloquerait la validation du dataset à tort, même sur un très
-# gros volume de données (des millions de lignes).
-# ----------------------------------------------------------------
-
-RATIO_UNICITE_MAX_CIBLE = 0.50
-
 
 # ================================================================
 # SUIVI DE PROGRESSION (POUR L'API WEB)
@@ -793,17 +780,6 @@ def detecter_probleme(df):
 #
 # Le type de problème (classification / régression) est ensuite
 # déterminé à partir de cette cible choisie.
-#
-# CORRECTIF : un garde-fou anti-colonne-identifiant a été ajouté
-# ci-dessous. Sans lui, une colonne cible de type ID (email,
-# référence, identifiant client...) — qu'elle vienne de la
-# suggestion automatique ou d'un choix manuel — est traitée comme
-# une classification avec autant de classes que de lignes quasi
-# uniques. Sur un très gros dataset (plusieurs millions de lignes),
-# cela fait exploser artificiellement le nombre de classes, et
-# l'étape 5ter (validation du dataset) bloque alors le pipeline à
-# tort en pensant que le dataset est "trop petit par classe", alors
-# que le vrai problème est le choix de la colonne cible.
 # ================================================================
 
 def choisir_cible_manuellement(
@@ -849,88 +825,38 @@ def choisir_cible_manuellement(
 
     if not reponse:
 
-        target = target_auto
+        return target_auto, problem_type_auto
+
+    # Sélection par numéro
+    if reponse.isdigit():
+
+        index = int(reponse)
+
+        if index < 0 or index >= len(colonnes):
+
+            raise ValueError(
+                f"Numéro de colonne invalide : {index}"
+            )
+
+        target = colonnes[index]
 
     else:
 
-        # Sélection par numéro
-        if reponse.isdigit():
+        # Sélection par nom
+        if reponse not in colonnes:
 
-            index = int(reponse)
+            raise ValueError(
+                f"La colonne '{reponse}' n'existe pas "
+                f"dans le dataset."
+            )
 
-            if index < 0 or index >= len(colonnes):
-
-                raise ValueError(
-                    f"Numéro de colonne invalide : {index}"
-                )
-
-            target = colonnes[index]
-
-        else:
-
-            # Sélection par nom
-            if reponse not in colonnes:
-
-                raise ValueError(
-                    f"La colonne '{reponse}' n'existe pas "
-                    f"dans le dataset."
-                )
-
-            target = reponse
-
-    if target is None:
-
-        raise ValueError(
-            "Aucune colonne cible n'a pu être déterminée "
-            "(ni automatiquement, ni manuellement)."
-        )
+        target = reponse
 
     # ------------------------------------------------------------
     # DETERMINATION DU TYPE DE PROBLEME POUR LA CIBLE CHOISIE
     # ------------------------------------------------------------
 
     serie = df[target]
-
-    # --------------------------------------------------------
-    # GARDE-FOU : colonne identifiant (ID) détectée
-    #
-    # Si la quasi-totalité des valeurs d'une colonne NON
-    # numérique sont uniques, ce n'est presque jamais une
-    # variable à prédire (email, ID client, référence,
-    # numéro de commande...). La traiter en classification
-    # ferait exploser le nombre de classes et bloquerait la
-    # validation du dataset à tort, même sur un très gros
-    # dataset (des millions de lignes).
-    #
-    # On ne l'applique volontairement qu'aux colonnes NON
-    # numériques : une colonne numérique à forte unicité
-    # (ex : un prix, un âge en années/mois) est déjà bien
-    # gérée par la branche régression juste en dessous.
-    # --------------------------------------------------------
-
-    n_lignes = len(serie)
-
-    taux_unicite = (
-        serie.nunique(dropna=False) / n_lignes
-        if n_lignes
-        else 0
-    )
-
-    if (
-        not pd.api.types.is_numeric_dtype(serie)
-        and taux_unicite > RATIO_UNICITE_MAX_CIBLE
-    ):
-
-        raise ValueError(
-            f"La colonne '{target}' contient "
-            f"{serie.nunique(dropna=False)} valeurs quasi "
-            f"toutes uniques ({taux_unicite:.0%} du dataset) : "
-            f"elle ressemble à une colonne identifiant (ID, "
-            f"email, référence, numéro de commande...) plutôt "
-            f"qu'à une variable à prédire. Choisissez une autre "
-            f"colonne cible représentant une vraie catégorie "
-            f"métier (ex : statut, segment, type)."
-        )
 
     if pd.api.types.is_numeric_dtype(serie) and serie.nunique() > 15:
 
@@ -973,7 +899,7 @@ def choisir_cible_manuellement(
 # d'arrêter proprement (voir executer_pipeline).
 # ================================================================
 
-def valider_taille_dataset(df, target, problem_type):
+def valider_taille_dataset(df, target, problem_type, df_original=None):
 
     afficher_titre(
         "5ter",
@@ -982,7 +908,9 @@ def valider_taille_dataset(df, target, problem_type):
 
     validateur = DatasetValidator(test_size=TEST_SIZE)
 
-    diagnostic = validateur.validate(df, target, problem_type)
+    diagnostic = validateur.validate(
+        df, target, problem_type, df_original=df_original
+    )
 
     panneau = formater_panneau_validation(diagnostic)
 
@@ -1937,10 +1865,38 @@ def evaluer_modele(
 # ETAPE 12 — EXPLICABILITE
 # ================================================================
 
+# ================================================================
+# BUDGET SHAP / EXPLICABILITE
+# ================================================================
+#
+# Ne jamais lancer SHAP sur toutes les lignes d'un gros dataset :
+# on adapte la taille de l'échantillon (et le temps qu'on lui
+# accorde) à la taille du dataset. Un échec ou un dépassement de
+# temps sur SHAP ne doit JAMAIS faire perdre les résultats déjà
+# obtenus (AutoML, évaluation).
+# ================================================================
+
+MAX_FEATURES_SHAP = 50
+
+
+def determiner_budget_shap(n_rows):
+
+    if n_rows <= 1000:
+
+        return {"taille_echantillon": None, "timeout": 90}
+
+    if n_rows <= 10000:
+
+        return {"taille_echantillon": 1000, "timeout": 60}
+
+    return {"taille_echantillon": 500, "timeout": 45}
+
+
 def expliquer_modele(
     champion,
     X_train,
-    problem_type
+    problem_type,
+    y_train=None
 ):
 
     afficher_titre(
@@ -1976,6 +1932,117 @@ def expliquer_modele(
 
         return None
 
+    # ------------------------------------------------------------
+    # ECHANTILLONNAGE ADAPTATIF (LIGNES)
+    # ------------------------------------------------------------
+
+    n_rows, n_features = X_train.shape
+
+    budget = determiner_budget_shap(n_rows)
+
+    X_shap = X_train
+
+    echantillonnage_applique = False
+
+    if (
+        budget["taille_echantillon"] is not None
+        and n_rows > budget["taille_echantillon"]
+    ):
+
+        try:
+
+            if y_train is not None:
+
+                if not isinstance(y_train, pd.Series):
+
+                    y_train = pd.Series(
+                        y_train, index=X_train.index
+                    )
+
+                X_shap, _ = echantillonner_pour_recherche(
+                    X_train,
+                    y_train,
+                    problem_type,
+                    budget["taille_echantillon"]
+                )
+
+            else:
+
+                X_shap = X_train.sample(
+                    n=budget["taille_echantillon"],
+                    random_state=RANDOM_STATE
+                )
+
+        except Exception:
+
+            X_shap = X_train.sample(
+                n=min(budget["taille_echantillon"], n_rows),
+                random_state=RANDOM_STATE
+            )
+
+        echantillonnage_applique = True
+
+        print(
+            f"\nℹ️ Dataset de {n_rows} lignes : l'analyse SHAP "
+            f"utilise un échantillon représentatif de "
+            f"{len(X_shap)} lignes."
+        )
+
+    # ------------------------------------------------------------
+    # LIMITATION DU NOMBRE DE FEATURES
+    # ------------------------------------------------------------
+
+    features_limitees = False
+
+    if n_features > MAX_FEATURES_SHAP:
+
+        importances = getattr(
+            model, "feature_importances_", None
+        )
+
+        if importances is not None:
+
+            top_index = np.argsort(importances)[::-1][
+                :MAX_FEATURES_SHAP
+            ]
+
+            colonnes_conservees = X_shap.columns[top_index]
+
+        else:
+
+            colonnes_conservees = X_shap.columns[:MAX_FEATURES_SHAP]
+
+        X_shap = X_shap[colonnes_conservees]
+
+        features_limitees = True
+
+        print(
+            f"\nℹ️ {n_features} features détectées : l'analyse "
+            f"SHAP est limitée aux {MAX_FEATURES_SHAP} variables "
+            f"les plus importantes."
+        )
+
+    if echantillonnage_applique or features_limitees:
+
+        print(
+            "\n⚠️ Analyse d'explicabilité limitée"
+        )
+
+        print(
+            "L'analyse SHAP a été limitée à un échantillon "
+            "représentatif et/ou à un sous-ensemble de variables "
+            "afin de préserver les performances du serveur."
+        )
+
+    # ------------------------------------------------------------
+    # EXECUTION AVEC TIMEOUT
+    #
+    # SHAP (surtout l'Explainer générique, non-arbre) peut être
+    # très lent. On exécute le calcul dans un thread séparé et on
+    # abandonne proprement si le budget de temps est dépassé,
+    # SANS jamais faire perdre les résultats AutoML déjà obtenus.
+    # ------------------------------------------------------------
+
     try:
 
         explainer = ModelExplainer()
@@ -1998,18 +2065,46 @@ def expliquer_modele(
 
             return None
 
-        try:
+        from concurrent.futures import (
+            ThreadPoolExecutor,
+            TimeoutError as FutureTimeoutError
+        )
 
-            resultat = methode(
-                model,
-                X_train
-            )
+        def _executer():
 
-        except TypeError:
+            try:
+                return methode(model, X_shap)
+            except TypeError:
+                return methode(model)
 
-            resultat = methode(
-                model
-            )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+
+            future = executor.submit(_executer)
+
+            try:
+
+                resultat = future.result(
+                    timeout=budget["timeout"]
+                )
+
+            except FutureTimeoutError:
+
+                print(
+                    f"\n⚠️ Analyse d'explicabilité limitée"
+                )
+
+                print(
+                    f"L'analyse SHAP a dépassé le budget de temps "
+                    f"alloué ({budget['timeout']}s) et a été "
+                    f"interrompue. Les résultats AutoML et "
+                    f"l'évaluation du modèle restent disponibles."
+                )
+
+                return {
+                    "shap_values": None,
+                    "limite": True,
+                    "raison": "timeout",
+                }
 
         print(
             "\n✅ Explicabilité terminée."
@@ -2021,6 +2116,11 @@ def expliquer_modele(
 
         print(
             f"⚠️ Explicabilité non disponible : {e}"
+        )
+
+        print(
+            "Les résultats AutoML et l'évaluation du modèle "
+            "restent disponibles malgré l'échec de SHAP."
         )
 
         return None
@@ -4931,14 +5031,10 @@ def executer_pipeline(
     except Exception as e:
 
         afficher_erreur(
-            "Le choix de la cible a rencontré un problème "
-            "(éventuellement une colonne identifiant détectée). "
-            "Le pipeline s'arrête pour éviter un blocage trompeur "
-            "plus loin dans la validation du dataset.",
+            "Le choix manuel de la cible a rencontré un problème. "
+            "La suggestion automatique est conservée.",
             e
         )
-
-        return
 
     # ------------------------------------------------------------
     # ETAPE 5ter — validation de la taille / qualité du dataset
@@ -4949,7 +5045,8 @@ def executer_pipeline(
         diagnostic_validation = valider_taille_dataset(
             df_clean,
             target,
-            problem_type
+            problem_type,
+            df_original=df_initial
         )
 
     except Exception as e:
@@ -4961,6 +5058,18 @@ def executer_pipeline(
         )
 
         diagnostic_validation = None
+
+    # Le DataFrame filtré (cible manquante / classes ultra-rares
+    # retirées) est extrait ici et RETIRÉ du diagnostic : un
+    # DataFrame n'est pas sérialisable en JSON, et il ne doit donc
+    # jamais se retrouver dans le résultat final envoyé à l'API.
+    df_valide = None
+
+    if diagnostic_validation is not None:
+
+        df_valide = diagnostic_validation.pop(
+            "dataset_filtre", None
+        )
 
     if diagnostic_validation is not None and diagnostic_validation.get(
         "bloquant"
@@ -5029,6 +5138,14 @@ def executer_pipeline(
     # ============================================================
     # ETAPE 6
     # ============================================================
+
+    # Si la validation a filtré des lignes (cible manquante et/ou
+    # classes ultra-rares exclues automatiquement), c'est CE
+    # dataset filtré qui doit être utilisé pour toute la suite du
+    # pipeline — pas le df_clean d'origine.
+    if df_valide is not None:
+
+        df_clean = df_valide
 
     try:
 
@@ -5248,7 +5365,12 @@ def executer_pipeline(
         explainability = expliquer_modele(
             champion,
             X_train,
-            problem_type
+            problem_type,
+            y_train=(
+                y_train_ml
+                if label_encoder_final is not None
+                else y_train
+            )
         )
 
     except Exception as e:

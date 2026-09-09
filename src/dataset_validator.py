@@ -7,11 +7,23 @@ Ce module vérifie, AVANT le train/test split, que le dataset est
 suffisamment grand et suffisamment équilibré pour permettre une
 séparation entraînement/test fiable.
 
-Objectif : ne jamais laisser le pipeline planter (crash serveur,
-exception sklearn non gérée) sur un dataset trop petit. À la place,
-on renvoie un diagnostic clair, avec une recommandation, et on
-permet à l'appelant (man.py) d'arrêter proprement le pipeline en
-conservant tout ce qui a déjà été calculé.
+Il gère intelligemment deux problèmes fréquents plutôt que de
+tout bloquer au moindre souci :
+
+  1. Lignes où la cible est manquante (NaN) : elles sont toujours
+     retirées (impossible d'entraîner un modèle supervisé sans
+     cible connue), quelle que soit la taille du dataset.
+
+  2. Classes ultra-rares (souvent des erreurs de saisie, ex. une
+     valeur de durée "74 min" qui se retrouve dans une colonne de
+     catégorie) : si le dataset reste suffisamment grand une fois
+     ces quelques lignes retirées, on les exclut automatiquement
+     et on continue, au lieu de rejeter tout le dataset à cause de
+     quelques lignes.
+
+Le pipeline n'est arrêté ("bloquant") que lorsque, même après ce
+nettoyage, il ne reste vraiment pas assez de données pour une
+séparation entraînement/test fiable.
 ================================================================
 """
 
@@ -24,27 +36,14 @@ MIN_TOTAL_ROWS = 10
 MIN_OBS_PAR_CLASSE_BLOQUANT = 2
 MIN_OBS_PAR_CLASSE_RECOMMANDE = 5
 
-# ----------------------------------------------------------------
-# GARDE-FOU ANTI-COLONNE-IDENTIFIANT
-#
-# Si le nombre de classes distinctes dépasse cette proportion du
-# nombre total de lignes, la colonne cible ressemble beaucoup plus
-# à un identifiant (ID, email, référence unique...) qu'à une
-# véritable variable à prédire. Sans ce garde-fou, un très gros
-# dataset (ex. 10 millions de lignes) dont la cible détectée
-# automatiquement est un identifiant fait exploser le nombre de
-# classes : la quasi-totalité des classes se retrouvent avec
-# min_class_count = 1, et le pipeline se bloque à tort en pensant
-# que le dataset est "trop petit", alors que le vrai problème est
-# le choix de la colonne cible.
-# ----------------------------------------------------------------
-MAX_RATIO_CLASSES_SUR_LIGNES = 0.30
-
 
 class DatasetValidator:
     """
     Valide qu'un dataset peut raisonnablement être séparé en
-    train/test avant de lancer le reste du pipeline.
+    train/test avant de lancer le reste du pipeline, et renvoie
+    au passage une version filtrée du dataset (cible manquante et
+    classes ultra-rares retirées) prête à être utilisée par la
+    suite du pipeline.
     """
 
     def __init__(
@@ -52,25 +51,36 @@ class DatasetValidator:
         min_total_rows=MIN_TOTAL_ROWS,
         min_obs_par_classe_bloquant=MIN_OBS_PAR_CLASSE_BLOQUANT,
         min_obs_par_classe_recommande=MIN_OBS_PAR_CLASSE_RECOMMANDE,
-        max_ratio_classes_sur_lignes=MAX_RATIO_CLASSES_SUR_LIGNES,
         test_size=0.20,
     ):
         self.min_total_rows = min_total_rows
         self.min_obs_par_classe_bloquant = min_obs_par_classe_bloquant
         self.min_obs_par_classe_recommande = min_obs_par_classe_recommande
-        self.max_ratio_classes_sur_lignes = max_ratio_classes_sur_lignes
         self.test_size = test_size
 
-    def validate(self, df, target, problem_type):
+    def validate(self, df, target, problem_type, df_original=None):
         """
-        Retourne un dictionnaire de diagnostic complet. Ne lève
-        jamais d'exception : toute erreur interne est convertie en
-        diagnostic bloquant avec un message explicite, pour ne
-        jamais faire planter l'appelant.
+        Retourne un dictionnaire de diagnostic complet, avec en
+        plus une clé "dataset_filtre" contenant le DataFrame à
+        utiliser pour la suite du pipeline (identique à `df` si
+        rien n'a dû être retiré). Ne lève jamais d'exception :
+        toute erreur interne est convertie en diagnostic bloquant
+        avec un message explicite.
+
+        df_original : le dataset AVANT nettoyage/imputation, s'il
+        est disponible. Le nettoyage automatique du pipeline
+        (imputation par médiane/mode) intervient AVANT que la
+        cible ne soit choisie, et peut donc avoir déjà comblé des
+        valeurs de cible manquantes avec de fausses valeurs. Quand
+        df_original est fourni, c'est LUI qui sert de référence
+        pour détecter les véritables lignes à cible manquante,
+        pas `df` (potentiellement déjà imputé).
         """
 
         try:
-            return self._validate(df, target, problem_type)
+            return self._validate(
+                df, target, problem_type, df_original
+            )
         except Exception as e:
             return {
                 "ok": False,
@@ -82,6 +92,9 @@ class DatasetValidator:
                 "min_class_count": None,
                 "can_stratify": False,
                 "recommended_test_size": self.test_size,
+                "lignes_cible_manquante": 0,
+                "classes_exclues": [],
+                "dataset_filtre": None,
                 "messages": [
                     f"La validation automatique a rencontré une erreur "
                     f"inattendue : {e}"
@@ -92,15 +105,9 @@ class DatasetValidator:
                 ),
             }
 
-    def _validate(self, df, target, problem_type):
+    def _resultat_de_base(self, n_rows):
 
-        n_rows = int(len(df))
-
-        est_classification = str(problem_type).startswith(
-            "classification"
-        )
-
-        resultat = {
+        return {
             "ok": True,
             "bloquant": False,
             "titre": "✅ Dataset validé",
@@ -110,9 +117,67 @@ class DatasetValidator:
             "min_class_count": None,
             "can_stratify": False,
             "recommended_test_size": self.test_size,
+            "lignes_cible_manquante": 0,
+            "classes_exclues": [],
+            "dataset_filtre": None,
             "messages": [],
             "recommandation": None,
         }
+
+    def _validate(self, df, target, problem_type, df_original=None):
+
+        est_classification = str(problem_type).startswith(
+            "classification"
+        )
+
+        resultat = self._resultat_de_base(int(len(df)))
+
+        # ------------------------------------------------------------
+        # ETAPE 0 : retirer les lignes sans valeur cible connue.
+        #
+        # Un modèle supervisé ne peut de toute façon rien apprendre
+        # d'une ligne dont la cible est inconnue : ces lignes sont
+        # toujours retirées, quelle que soit la taille du dataset.
+        #
+        # IMPORTANT : on vérifie la cible manquante sur df_original
+        # quand il est fourni, car le nettoyage automatique du
+        # pipeline impute déjà les valeurs manquantes (médiane /
+        # mode) AVANT que la cible ne soit choisie — `df` peut donc
+        # déjà contenir de fausses valeurs à la place des vrais NaN.
+        # ------------------------------------------------------------
+
+        if (
+            df_original is not None
+            and target in df_original.columns
+        ):
+
+            cible_originale = df_original.reindex(df.index)[target]
+
+        else:
+
+            cible_originale = df[target]
+
+        masque_cible_connue = cible_originale.notna()
+
+        n_cible_manquante = int((~masque_cible_connue).sum())
+
+        df_travail = df
+
+        if n_cible_manquante > 0:
+
+            df_travail = df.loc[masque_cible_connue].copy()
+
+            resultat["lignes_cible_manquante"] = n_cible_manquante
+
+            resultat["messages"].append(
+                f"{n_cible_manquante} ligne(s) sans valeur pour la "
+                f"cible '{target}' ont été retirée(s) : impossible "
+                f"d'entraîner un modèle supervisé sans cible connue."
+            )
+
+        n_rows = int(len(df_travail))
+
+        resultat["n_rows"] = n_rows
 
         # ------------------------------------------------------------
         # CAS 1 : dataset globalement trop petit, peu importe le type
@@ -125,18 +190,20 @@ class DatasetValidator:
                     "ok": False,
                     "bloquant": True,
                     "titre": "⚠️ Dataset trop petit",
-                    "messages": [
-                        f"Le dataset contient seulement {n_rows} "
-                        f"observation(s), ce qui est insuffisant "
-                        f"pour toute séparation entraînement/test "
-                        f"fiable (minimum recommandé : "
-                        f"{self.min_total_rows})."
-                    ],
-                    "recommandation": (
-                        "Ajoutez davantage d'observations avant de "
-                        "relancer l'analyse."
-                    ),
+                    "dataset_filtre": df_travail,
                 }
+            )
+
+            resultat["messages"].append(
+                f"Il ne reste que {n_rows} observation(s) exploitable"
+                f"(s), ce qui est insuffisant pour toute séparation "
+                f"entraînement/test fiable (minimum recommandé : "
+                f"{self.min_total_rows})."
+            )
+
+            resultat["recommandation"] = (
+                "Ajoutez davantage d'observations avant de relancer "
+                "l'analyse."
             )
 
             return resultat
@@ -147,182 +214,241 @@ class DatasetValidator:
 
         if est_classification:
 
-            y = df[target]
+            return self._valider_classification(
+                df_travail, target, resultat
+            )
 
-            class_counts = y.value_counts(dropna=False)
+        # ------------------------------------------------------------
+        # CAS 3 : régression -> juste une taille minimale raisonnable
+        # ------------------------------------------------------------
 
-            n_classes = int(class_counts.shape[0])
+        return self._valider_regression(df_travail, resultat)
 
-            min_class_count = int(class_counts.min())
+    # ----------------------------------------------------------------
+    # CLASSIFICATION
+    # ----------------------------------------------------------------
 
-            resultat["n_classes"] = n_classes
-            resultat["class_counts"] = {
-                str(k): int(v) for k, v in class_counts.items()
-            }
-            resultat["min_class_count"] = min_class_count
+    def _valider_classification(self, df_travail, target, resultat):
 
-            # --------------------------------------------------------
-            # CAS 2.0 : colonne cible qui ressemble à un identifiant
-            #
-            # Doit être vérifié AVANT les cas "une seule classe" /
-            # "classe trop petite", car c'est la vraie cause racine :
-            # sur un dataset de plusieurs millions de lignes avec une
-            # colonne cible de type ID, presque toutes les classes ont
-            # 1 seule observation, ce qui masquerait le vrai problème
-            # derrière un message "dataset trop petit" trompeur.
-            # --------------------------------------------------------
+        n_rows = int(len(df_travail))
 
-            ratio_classes = n_classes / n_rows if n_rows else 0
+        y = df_travail[target]
 
-            if (
-                n_rows >= self.min_total_rows
-                and ratio_classes > self.max_ratio_classes_sur_lignes
-            ):
+        class_counts = y.value_counts(dropna=True)
 
-                resultat.update(
-                    {
-                        "ok": False,
-                        "bloquant": True,
-                        "titre": (
-                            "⚠️ La cible ressemble à un identifiant"
-                        ),
-                        "messages": [
-                            f"La colonne cible '{target}' contient "
-                            f"{n_classes} valeurs distinctes pour "
-                            f"{n_rows} lignes (soit {ratio_classes:.0%} "
-                            f"de valeurs uniques).",
-                            "Cela ressemble beaucoup plus à une "
-                            "colonne identifiant (ID, email, "
-                            "référence, numéro de commande...) qu'à "
-                            "une véritable variable à prédire.",
-                        ],
-                        "recommandation": (
-                            "Vérifiez la colonne cible choisie : un "
-                            "identifiant quasi unique par ligne ne "
-                            "peut pas servir de cible de "
-                            "classification. Sélectionnez une "
-                            "colonne qui représente une vraie "
-                            "catégorie métier (ex : statut, "
-                            "segment, type)."
-                        ),
-                        "can_stratify": False,
-                    }
-                )
+        n_classes = int(class_counts.shape[0])
 
-                return resultat
+        if n_classes < 2:
 
-            if n_classes < 2:
+            resultat.update(
+                {
+                    "ok": False,
+                    "bloquant": True,
+                    "titre": "⚠️ Une seule classe détectée",
+                    "dataset_filtre": df_travail,
+                }
+            )
 
-                resultat.update(
-                    {
-                        "ok": False,
-                        "bloquant": True,
-                        "titre": "⚠️ Une seule classe détectée",
-                        "messages": [
-                            f"La colonne cible '{target}' ne "
-                            f"contient qu'une seule classe unique. "
-                            f"Un modèle de classification a besoin "
-                            f"d'au moins deux classes distinctes."
-                        ],
-                        "recommandation": (
-                            "Vérifiez la colonne cible choisie, ou "
-                            "ajoutez des observations couvrant "
-                            "d'autres classes."
-                        ),
-                    }
-                )
+            resultat["messages"].append(
+                f"La colonne cible '{target}' ne contient qu'une "
+                f"seule classe unique. Un modèle de classification a "
+                f"besoin d'au moins deux classes distinctes."
+            )
 
-                return resultat
+            resultat["recommandation"] = (
+                "Vérifiez la colonne cible choisie, ou ajoutez des "
+                "observations couvrant d'autres classes."
+            )
 
-            if min_class_count < self.min_obs_par_classe_bloquant:
+            return resultat
+
+        # ------------------------------------------------------------
+        # Classes trop rares (souvent des erreurs de saisie) : on
+        # essaie de les exclure automatiquement plutôt que de tout
+        # bloquer, SI le dataset reste exploitable une fois ces
+        # quelques lignes retirées.
+        # ------------------------------------------------------------
+
+        classes_rares = class_counts[
+            class_counts < self.min_obs_par_classe_bloquant
+        ]
+
+        if len(classes_rares) > 0:
+
+            noms_classes_rares = list(classes_rares.index)
+
+            masque_rare = y.isin(noms_classes_rares)
+
+            n_lignes_rares = int(masque_rare.sum())
+
+            df_sans_rares = df_travail.loc[~masque_rare].copy()
+
+            y_sans_rares = df_sans_rares[target]
+
+            n_classes_restantes = int(y_sans_rares.nunique())
+
+            n_rows_restantes = int(len(df_sans_rares))
+
+            exclusion_viable = (
+                n_rows_restantes >= self.min_total_rows
+                and n_classes_restantes >= 2
+            )
+
+            if not exclusion_viable:
 
                 resultat.update(
                     {
                         "ok": False,
                         "bloquant": True,
                         "titre": "⚠️ Dataset trop petit",
-                        "messages": [
-                            f"Le dataset contient seulement "
-                            f"{n_rows} observations pour "
-                            f"{n_classes} classes.",
-                            f"La classe la moins représentée ne "
-                            f"contient que {min_class_count} "
-                            f"observation(s) : une séparation "
-                            f"entraînement/test fiable n'est pas "
-                            f"possible.",
-                        ],
-                        "recommandation": (
-                            "Ajoutez davantage d'observations pour "
-                            "la ou les classes minoritaires."
-                        ),
+                        "n_classes": n_classes,
+                        "class_counts": {
+                            str(k): int(v)
+                            for k, v in class_counts.items()
+                        },
+                        "min_class_count": int(class_counts.min()),
                         "can_stratify": False,
+                        "dataset_filtre": df_travail,
                     }
+                )
+
+                resultat["messages"].append(
+                    f"Le dataset contient {n_rows} observations pour "
+                    f"{n_classes} classes, mais la ou les classes "
+                    f"les moins représentées ({', '.join(str(c) for c in noms_classes_rares)}) "
+                    f"n'ont que {int(classes_rares.min())} "
+                    f"observation(s) chacune. Les exclure ne "
+                    f"laisserait plus assez de données "
+                    f"({n_rows_restantes} lignes, "
+                    f"{n_classes_restantes} classes) pour une "
+                    f"séparation fiable."
+                )
+
+                resultat["recommandation"] = (
+                    "Ajoutez davantage d'observations pour la ou les "
+                    "classes minoritaires."
                 )
 
                 return resultat
 
-            # Peut être séparé, mais pas nécessairement de façon
-            # confortable.
+            # Exclusion automatique viable : on continue avec le
+            # dataset filtré.
 
-            resultat["can_stratify"] = True
+            resultat["classes_exclues"] = [
+                {
+                    "classe": str(classe),
+                    "observations": int(classes_rares[classe]),
+                }
+                for classe in noms_classes_rares
+            ]
 
-            if min_class_count < self.min_obs_par_classe_recommande:
+            resultat["titre"] = "⚠️ Dataset validé avec exclusions"
 
-                resultat.update(
-                    {
-                        "ok": True,
-                        "bloquant": False,
-                        "titre": "⚠️ Dataset validé avec réserves",
-                        "messages": [
-                            f"La classe la moins représentée ne "
-                            f"contient que {min_class_count} "
-                            f"observations (recommandé : au moins "
-                            f"{self.min_obs_par_classe_recommande}). "
-                            f"Les métriques calculées sur cette "
-                            f"classe seront peu fiables.",
-                        ],
-                        "recommandation": (
-                            "Les résultats seront calculés, mais "
-                            "restent à interpréter avec prudence "
-                            "pour les classes minoritaires."
-                        ),
-                    }
-                )
+            details_classes = ", ".join(
+                f"'{classe}' ({int(classes_rares[classe])} obs.)"
+                for classe in noms_classes_rares
+            )
 
-            # Vérifie que le test_size par défaut laisse au moins
-            # une observation de chaque classe côté test.
+            resultat["messages"].append(
+                f"{len(noms_classes_rares)} classe(s) trop rare(s) "
+                f"(moins de {self.min_obs_par_classe_bloquant} "
+                f"observations, souvent des erreurs de saisie) ont "
+                f"été exclues automatiquement : {details_classes}. "
+                f"{n_lignes_rares} ligne(s) au total retirée(s) sur "
+                f"{n_rows}."
+            )
 
-            attendu_test = min_class_count * self.test_size
+            resultat["recommandation"] = (
+                "Vérifiez si ces valeurs rares correspondent à des "
+                "erreurs de saisie dans votre fichier source."
+            )
 
-            if attendu_test < 1:
-
-                test_size_ajuste = max(
-                    round(1 / min_class_count, 2),
-                    self.test_size,
-                )
-
-                test_size_ajuste = min(test_size_ajuste, 0.5)
-
-                resultat["recommended_test_size"] = test_size_ajuste
-
-                resultat["messages"].append(
-                    f"Le test_size par défaut ({self.test_size}) "
-                    f"ne garantirait pas au moins une observation "
-                    f"de chaque classe dans le jeu de test. "
-                    f"Ajustement automatique à "
-                    f"{test_size_ajuste}."
-                )
-
-            return resultat
+            df_travail = df_sans_rares
+            y = y_sans_rares
+            class_counts = class_counts.drop(
+                index=noms_classes_rares
+            )
+            n_classes = n_classes_restantes
+            n_rows = n_rows_restantes
 
         # ------------------------------------------------------------
-        # CAS 3 : régression -> juste une taille minimale raisonnable
+        # A ce stade, toutes les classes restantes ont au moins
+        # min_obs_par_classe_bloquant observations : la séparation
+        # stratifiée est possible.
         # ------------------------------------------------------------
+
+        min_class_count = int(class_counts.min())
+
+        resultat["n_rows"] = n_rows
+        resultat["n_classes"] = n_classes
+        resultat["class_counts"] = {
+            str(k): int(v) for k, v in class_counts.items()
+        }
+        resultat["min_class_count"] = min_class_count
+        resultat["can_stratify"] = True
+        resultat["dataset_filtre"] = df_travail
+
+        if min_class_count < self.min_obs_par_classe_recommande:
+
+            resultat["messages"].append(
+                f"La classe la moins représentée ne contient que "
+                f"{min_class_count} observations (recommandé : au "
+                f"moins {self.min_obs_par_classe_recommande}). Les "
+                f"métriques calculées sur cette classe seront peu "
+                f"fiables."
+            )
+
+            if resultat["titre"] == "✅ Dataset validé":
+
+                resultat["titre"] = "⚠️ Dataset validé avec réserves"
+
+            if not resultat["recommandation"]:
+
+                resultat["recommandation"] = (
+                    "Les résultats seront calculés, mais restent à "
+                    "interpréter avec prudence pour les classes "
+                    "minoritaires."
+                )
+
+        # Vérifie que le test_size par défaut laisse au moins une
+        # observation de chaque classe côté test.
+
+        attendu_test = min_class_count * self.test_size
+
+        if attendu_test < 1:
+
+            test_size_ajuste = max(
+                round(1 / min_class_count, 2),
+                self.test_size,
+            )
+
+            test_size_ajuste = min(test_size_ajuste, 0.5)
+
+            resultat["recommended_test_size"] = test_size_ajuste
+
+            resultat["messages"].append(
+                f"Le test_size par défaut ({self.test_size}) ne "
+                f"garantirait pas au moins une observation de chaque "
+                f"classe dans le jeu de test. Ajustement automatique "
+                f"à {test_size_ajuste}."
+            )
+
+        return resultat
+
+    # ----------------------------------------------------------------
+    # REGRESSION
+    # ----------------------------------------------------------------
+
+    def _valider_regression(self, df_travail, resultat):
+
+        n_rows = int(len(df_travail))
 
         min_total_regression = max(self.min_total_rows, 10)
 
         min_train_reg = max(int(n_rows * (1 - self.test_size)), 1)
         min_test_reg = max(n_rows - min_train_reg, 0)
+
+        resultat["dataset_filtre"] = df_travail
 
         if n_rows < min_total_regression or min_test_reg < 2:
 
@@ -331,38 +457,35 @@ class DatasetValidator:
                     "ok": False,
                     "bloquant": True,
                     "titre": "⚠️ Dataset trop petit",
-                    "messages": [
-                        f"Le dataset contient seulement {n_rows} "
-                        f"observations, ce qui ne permet pas une "
-                        f"séparation entraînement/test fiable pour "
-                        f"une régression."
-                    ],
-                    "recommandation": (
-                        "Ajoutez davantage d'observations avant de "
-                        "relancer l'analyse."
-                    ),
                 }
+            )
+
+            resultat["messages"].append(
+                f"Le dataset contient seulement {n_rows} "
+                f"observations, ce qui ne permet pas une séparation "
+                f"entraînement/test fiable pour une régression."
+            )
+
+            resultat["recommandation"] = (
+                "Ajoutez davantage d'observations avant de relancer "
+                "l'analyse."
             )
 
             return resultat
 
         if n_rows < 30:
 
-            resultat.update(
-                {
-                    "titre": "⚠️ Dataset validé avec réserves",
-                    "messages": [
-                        f"Le dataset ne contient que {n_rows} "
-                        f"observations. Les métriques de "
-                        f"régression (R², RMSE, MAE) seront "
-                        f"instables sur un jeu de test aussi "
-                        f"petit.",
-                    ],
-                    "recommandation": (
-                        "Interprétez les résultats avec prudence "
-                        "et privilégiez la validation croisée."
-                    ),
-                }
+            resultat["titre"] = "⚠️ Dataset validé avec réserves"
+
+            resultat["messages"].append(
+                f"Le dataset ne contient que {n_rows} observations. "
+                f"Les métriques de régression (R², RMSE, MAE) seront "
+                f"instables sur un jeu de test aussi petit."
+            )
+
+            resultat["recommandation"] = (
+                "Interprétez les résultats avec prudence et "
+                "privilégiez la validation croisée."
             )
 
         return resultat
