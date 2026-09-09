@@ -78,6 +78,12 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         Détermine si une colonne texte semble être une date.
         """
 
+        # Une colonne déjà convertie en datetime (ex. par l'import
+        # intelligent en amont du pipeline) est évidemment une
+        # date : pas besoin d'inférence depuis du texte.
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return True
+
         if not (
             pd.api.types.is_object_dtype(series)
             or pd.api.types.is_string_dtype(series)

@@ -112,6 +112,10 @@ from src.dataset_validator import (
     formater_panneau_validation,
 )
 from src.leakage_detector import DataLeakageDetector
+from src.smart_file_analyzer import (
+    importer_fichier_intelligent,
+    generer_apercu,
+)
 
 
 # ================================================================
@@ -297,7 +301,7 @@ def creer_dossiers(base_dir="."):
 # besoin d'aucune modification.
 # ================================================================
 
-def charger_donnees(chemin_impose=None):
+def charger_donnees(chemin_impose=None, mode_transposition="automatique"):
 
     afficher_titre(
         1,
@@ -328,37 +332,99 @@ def charger_donnees(chemin_impose=None):
 
     extension = os.path.splitext(chemin.lower())[1]
 
-    if extension == ".csv":
+    rapport_import = None
 
-        loader = DataLoader()
+    if extension in (".csv", ".xlsx", ".xls"):
 
-        # Recherche automatique de la bonne méthode
+        # ------------------------------------------------------------
+        # IMPORT INTELLIGENT (toutes feuilles pour Excel) :
+        # détection de la vraie ligne d'en-tête, nettoyage du bruit
+        # en haut/bas/colonnes vides, en-têtes dupliqués, décision
+        # de transposition, relations entre feuilles.
+        # ------------------------------------------------------------
 
-        methode = trouver_methode(
-            loader,
-            [
-                "load_csv",
-                "charger_csv",
-                "load",
-                "charger",
-                "read_csv"
-            ]
+        resultat_import = importer_fichier_intelligent(
+            chemin,
+            mode_transposition=mode_transposition
         )
 
-        if methode is None:
+        feuille_principale = resultat_import["feuille_principale"]
 
-            raise AttributeError(
-                "Aucune méthode de chargement compatible "
-                "n'a été trouvée dans DataLoader."
+        info_feuille = resultat_import["feuilles"][feuille_principale]
+
+        df = info_feuille["df_propre"]
+
+        n_feuilles = len(resultat_import["feuilles"])
+
+        if n_feuilles > 1:
+
+            print(
+                f"\n📑 {n_feuilles} feuille(s) détectée(s) dans le "
+                f"classeur : "
+                f"{list(resultat_import['feuilles'].keys())}"
             )
 
-        df = methode(
-            chemin
-        )
+            print(
+                f"📌 Feuille retenue pour l'analyse : "
+                f"'{feuille_principale}' (la plus riche en "
+                f"données exploitables)."
+            )
 
-    elif extension in (".xlsx", ".xls"):
+            if resultat_import["relations_entre_feuilles"]:
 
-        df = pd.read_excel(chemin)
+                print(
+                    f"\n🔗 {len(resultat_import['relations_entre_feuilles'])} "
+                    f"relation(s) probable(s) détectée(s) entre "
+                    f"les feuilles :"
+                )
+
+                for relation in resultat_import[
+                    "relations_entre_feuilles"
+                ]:
+
+                    print(
+                        f"   • {relation['feuille_a']}."
+                        f"{relation['colonne_a']} ↔ "
+                        f"{relation['feuille_b']}."
+                        f"{relation['colonne_b']} "
+                        f"(recouvrement : "
+                        f"{relation['recouvrement_valeurs'] * 100:.0f}%)"
+                    )
+
+        if info_feuille["rapport"]["transformations"]:
+
+            print(
+                "\n🧹 Nettoyage automatique de la structure du "
+                "fichier :"
+            )
+
+            for transformation in info_feuille["rapport"][
+                "transformations"
+            ]:
+
+                print(
+                    f"   • {transformation}"
+                )
+
+        rapport_import = {
+            "n_feuilles": n_feuilles,
+            "feuille_principale": feuille_principale,
+            "feuilles_disponibles": list(
+                resultat_import["feuilles"].keys()
+            ),
+            "relations_entre_feuilles": resultat_import[
+                "relations_entre_feuilles"
+            ],
+            "transformations": info_feuille["rapport"][
+                "transformations"
+            ],
+            "transposition_effectuee": info_feuille["rapport"].get(
+                "transposition_effectuee", False
+            ),
+            "dimensions_brutes": info_feuille["rapport"][
+                "dimensions_brutes"
+            ],
+        }
 
     elif extension == ".json":
 
@@ -414,7 +480,7 @@ def charger_donnees(chemin_impose=None):
             f"Formats acceptés : .csv, .xlsx, .xls, .json"
         )
 
-    print("✅ Données chargées")
+    print("\n✅ Données chargées")
 
     print(
         f"📊 Lignes : {df.shape[0]}"
@@ -424,7 +490,7 @@ def charger_donnees(chemin_impose=None):
         f"📋 Colonnes : {df.shape[1]}"
     )
 
-    return df
+    return df, rapport_import
 
 
 # ================================================================
@@ -4849,6 +4915,8 @@ def executer_pipeline(
 
     df_initial = None
 
+    rapport_import = None
+
     df_clean = None
 
     profil = None
@@ -4905,7 +4973,9 @@ def executer_pipeline(
 
     try:
 
-        df_initial = charger_donnees(chemin_impose=chemin_csv)
+        df_initial, rapport_import = charger_donnees(
+            chemin_impose=chemin_csv
+        )
 
     except Exception as e:
 
@@ -5114,6 +5184,7 @@ def executer_pipeline(
             "raison": "dataset_trop_petit",
             "target": target,
             "problem_type": problem_type,
+            "import_fichier": rapport_import,
             "validation_dataset": diagnostic_validation,
             "dataset_initial": {
                 "lignes": int(df_initial.shape[0]),
@@ -5560,6 +5631,7 @@ def executer_pipeline(
         ),
         "validation_dataset": diagnostic_validation,
         "data_leakage": leakage_report,
+        "import_fichier": rapport_import,
         "champion": (
             {
                 "modele": champion.get("model"),
