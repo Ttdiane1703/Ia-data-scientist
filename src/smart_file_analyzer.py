@@ -43,6 +43,13 @@ MOTS_CLES_BRUIT = (
 
 MAX_LIGNES_CANDIDATES_ENTETE = 15
 
+# Une vraie zone de métadonnées empilées (Code/Libellé/Pondération)
+# est toujours courte. Une limite basse évite de confondre ce motif
+# avec un dataset dont la première colonne est simplement une
+# colonne catégorielle/texte normale (ex. des identifiants "s1",
+# "s2"...), qui ne s'arrêterait alors jamais naturellement.
+LIMITE_BLOC_METADONNEES = 8
+
 
 # ================================================================
 # CHARGEMENT (TOUTES FEUILLES POUR EXCEL)
@@ -190,6 +197,110 @@ def detecter_ligne_entete(df_brut):
     return meilleur_index
 
 
+def _ressemble_a_une_date_valeur(texte):
+
+    try:
+        resultat = pd.to_datetime(texte, errors="raise")
+        return pd.notna(resultat)
+    except Exception:
+        return False
+
+
+def _ligne_est_metadonnee_col0(df_brut, index_ligne):
+    """
+    Certains fichiers (exports statistiques, indices, tableaux de
+    bord) empilent PLUSIEURS lignes de métadonnées au-dessus des
+    données (ex. Code / Libellé / Pondération), une ligne par
+    attribut, chaque colonne représentant un indicateur — plutôt
+    qu'une seule ligne d'en-tête classique.
+
+    Dans ce type de fichier, la première colonne de chaque ligne
+    de métadonnées contient le NOM de l'attribut (texte), alors que
+    la première colonne des vraies lignes de données contient une
+    date ou un nombre (l'index temporel/observationnel). C'est ce
+    signal qui permet de détecter la fin du bloc d'en-tête.
+    """
+
+    if df_brut.shape[1] == 0:
+        return False
+
+    valeur = df_brut.iat[index_ligne, 0]
+
+    if pd.isna(valeur):
+        # Ligne vide dans la zone d'en-tête : traitée comme faisant
+        # partie du bloc (souvent une ligne de séparation visuelle).
+        return True
+
+    texte = str(valeur).strip()
+
+    if texte == "":
+        return True
+
+    if _ressemble_a_un_nombre(texte):
+        return False
+
+    if _ressemble_a_une_date_valeur(texte):
+        return False
+
+    return True
+
+
+def detecter_bloc_entete(df_brut):
+    """
+    Détecte le BLOC de lignes d'en-tête/métadonnées en haut du
+    fichier (une ou plusieurs lignes), en se basant sur la
+    première colonne : tant qu'elle contient un libellé textuel
+    (nom d'attribut, titre...), la ligne appartient au bloc. Le
+    bloc s'arrête dès que la première colonne contient une vraie
+    valeur de donnée (date ou nombre), signe du début du tableau.
+
+    GARDE-FOUS (pour éviter de confondre ce motif avec un simple
+    dataset dont la première colonne est catégorielle/textuelle,
+    ex. des identifiants texte comme "s1", "s2"...) :
+    - le bloc n'est retenu QUE s'il s'arrête naturellement sur une
+      vraie ligne de donnée dans la zone de recherche (sinon on ne
+      peut pas distinguer "métadonnées empilées" de "colonne
+      catégorielle normale") ;
+    - il doit rester significativement plus de lignes de données
+      après le bloc que de lignes dans le bloc lui-même.
+
+    Si l'un de ces garde-fous échoue, retourne None : l'appelant
+    doit alors se rabattre sur la détection classique à une seule
+    ligne d'en-tête (`detecter_ligne_entete`).
+    """
+
+    if df_brut.shape[0] == 0:
+        return None
+
+    limite = min(LIMITE_BLOC_METADONNEES, len(df_brut))
+
+    indices_bloc = []
+
+    arret_naturel = False
+
+    for i in range(limite):
+
+        if _ligne_est_metadonnee_col0(df_brut, i):
+
+            indices_bloc.append(i)
+
+        else:
+
+            arret_naturel = True
+
+            break
+
+    if not arret_naturel or not indices_bloc:
+        return None
+
+    lignes_restantes = len(df_brut) - len(indices_bloc)
+
+    if lignes_restantes < max(10, 3 * len(indices_bloc)):
+        return None
+
+    return indices_bloc
+
+
 # ================================================================
 # DETECTION DES LIGNES DE BRUIT (HAUT / BAS)
 # ================================================================
@@ -317,6 +428,142 @@ def appliquer_entete(df_brut, index_entete, corps):
     corps.columns = noms_finaux
 
     return corps, noms_finaux
+
+
+def appliquer_entete_bloc(df_brut, indices_bloc, corps):
+    """
+    Construit les noms de colonnes à partir d'un BLOC de lignes de
+    métadonnées (ex. Code / Libellé / Pondération empilés), une
+    ligne par attribut. Pour chaque colonne, on retient la valeur
+    de la ligne la plus "textuelle" du bloc (donc la plus probable
+    d'être un vrai libellé descriptif plutôt qu'un code ou un
+    poids numérique), avec repli sur les lignes suivantes si cette
+    valeur est manquante pour cette colonne.
+
+    Si le bloc ne contient qu'une seule ligne, ce cas se ramène
+    exactement à `appliquer_entete` (comportement inchangé).
+    """
+
+    if len(indices_bloc) <= 1:
+
+        corps_resultat, noms = appliquer_entete(
+            df_brut, indices_bloc[0], corps
+        )
+
+        return corps_resultat, noms, []
+
+    n_colonnes = df_brut.shape[1]
+
+    # Classement des lignes du bloc par "textinité" (part de
+    # valeurs non numériques parmi les valeurs renseignées, hors
+    # première colonne qui ne contient que le nom de l'attribut).
+    scores_textinite = []
+
+    for indice in indices_bloc:
+
+        ligne = df_brut.iloc[indice, 1:]
+
+        valeurs = ligne.dropna().astype(str)
+
+        if len(valeurs) == 0:
+
+            scores_textinite.append((indice, -1.0))
+
+            continue
+
+        taux_texte = valeurs.apply(
+            lambda v: not _ressemble_a_un_nombre(v)
+        ).mean()
+
+        scores_textinite.append((indice, taux_texte))
+
+    ordre_priorite = [
+        indice
+        for indice, _ in sorted(
+            scores_textinite, key=lambda t: -t[1]
+        )
+    ]
+
+    # Nom de la première colonne : déterminé à partir des vraies
+    # données (pas du bloc de métadonnées, qui n'y porte que le
+    # nom de chaque attribut, jamais un nom pour la colonne 0
+    # elle-même).
+    noms_colonnes = [
+        _deviner_nom_premiere_colonne(corps)
+    ]
+
+    for position in range(1, n_colonnes):
+
+        nom_trouve = None
+
+        for indice in ordre_priorite:
+
+            valeur = df_brut.iat[indice, position]
+
+            if pd.notna(valeur) and str(valeur).strip() != "":
+
+                nom_trouve = str(valeur).strip()
+
+                break
+
+        noms_colonnes.append(
+            nom_trouve if nom_trouve else f"colonne_{position}"
+        )
+
+    # Dédoublonnage (identique à appliquer_entete).
+    compteur = {}
+
+    noms_finaux = []
+
+    for nom in noms_colonnes:
+
+        if nom not in compteur:
+
+            compteur[nom] = 0
+            noms_finaux.append(nom)
+
+        else:
+
+            compteur[nom] += 1
+            noms_finaux.append(f"{nom}_{compteur[nom]}")
+
+    corps = corps.copy()
+    corps.columns = noms_finaux
+
+    attributs_utilises = [
+        str(df_brut.iat[indice, 0]).strip()
+        for indice in indices_bloc
+        if pd.notna(df_brut.iat[indice, 0])
+    ]
+
+    return corps, noms_finaux, attributs_utilises
+
+
+def _deviner_nom_premiere_colonne(corps):
+
+    if corps.shape[0] == 0 or corps.shape[1] == 0:
+        return "colonne_0"
+
+    echantillon = corps.iloc[:, 0].dropna().astype(str).head(20)
+
+    if len(echantillon) == 0:
+        return "colonne_0"
+
+    taux_date = echantillon.apply(
+        _ressemble_a_une_date_valeur
+    ).mean()
+
+    if taux_date >= 0.7:
+        return "Date"
+
+    taux_nombre = echantillon.apply(
+        _ressemble_a_un_nombre
+    ).mean()
+
+    if taux_nombre >= 0.7:
+        return "identifiant"
+
+    return "colonne_0"
 
 
 def retirer_lignes_entete_dupliquees(df, noms_colonnes):
@@ -564,6 +811,12 @@ def decider_transposition(df, mode="automatique"):
 
     df_transpose.columns.name = None
 
+    # Les valeurs de l'ancienne première colonne (souvent des
+    # dates ou des identifiants) deviennent les nouveaux noms de
+    # colonnes : elles doivent toujours être du texte, jamais des
+    # objets datetime bruts (qui casseraient l'export CSV/JSON).
+    df_transpose.columns = [str(c) for c in df_transpose.columns]
+
     if mode == "oui":
         return df_transpose, True, None, None
 
@@ -690,13 +943,28 @@ def analyser_et_nettoyer_feuille(df_brut, mode_transposition="automatique"):
 
         return df_brut, rapport
 
-    index_entete = detecter_ligne_entete(df_brut)
+    indices_bloc_entete = detecter_bloc_entete(df_brut)
+
+    if indices_bloc_entete is None:
+
+        indices_bloc_entete = [detecter_ligne_entete(df_brut)]
+
+    index_entete = max(indices_bloc_entete)
 
     corps, lignes_titre, lignes_bas = nettoyer_haut_bas(
         df_brut, index_entete
     )
 
-    if lignes_titre > 0:
+    if len(indices_bloc_entete) > 1:
+
+        rapport["transformations"].append(
+            f"En-tête composite reconstitué à partir de "
+            f"{len(indices_bloc_entete)} lignes de métadonnées "
+            f"empilées (lignes {indices_bloc_entete}), plutôt "
+            f"qu'une seule ligne d'en-tête classique."
+        )
+
+    elif lignes_titre > 0:
 
         rapport["transformations"].append(
             f"{lignes_titre} ligne(s) de titre/notes retirée(s) "
@@ -711,7 +979,13 @@ def analyser_et_nettoyer_feuille(df_brut, mode_transposition="automatique"):
             f"fichier (totaux, notes, lignes vides)."
         )
 
-    df, noms_colonnes = appliquer_entete(df_brut, index_entete, corps)
+    df, noms_colonnes, attributs_entete = appliquer_entete_bloc(
+        df_brut, indices_bloc_entete, corps
+    )
+
+    if attributs_entete:
+
+        rapport["attributs_entete_utilises"] = attributs_entete
 
     df, n_entetes_dupliques = retirer_lignes_entete_dupliquees(
         df, noms_colonnes

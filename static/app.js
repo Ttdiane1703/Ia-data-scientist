@@ -160,6 +160,7 @@ fileInput.addEventListener("change", (e) => {
 
 async function traiterFichier(fichier) {
   el("dataset-error").hidden = true;
+  el("transpose-card").hidden = true;
 
   // ---- Vérification de la configuration ----
   if (!API_BASE || API_BASE.includes("REMPLACE-PAR-TON-URL")) {
@@ -198,8 +199,7 @@ async function traiterFichier(fichier) {
     activerNav("statistics");
     activerNav("eda");
 
-    remplirCiblePossibles(data.colonnes);
-    allerA("target");
+    afficherCarteTransposition(data.colonnes);
   } catch (err) {
     if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
       afficherErreurDataset(tr("dataset.error.network"));
@@ -232,6 +232,63 @@ async function afficherInfosDataset(nomFichier) {
     el("dataset-info-card").hidden = false;
   } catch (err) {
     toast(tr("dataset.error.fetch_info"));
+  }
+}
+
+// ----------------------------------------------------------------
+// 1bis. TRANSPOSITION DES COLONNES
+//
+// Après l'upload, l'utilisateur choisit si les données doivent être
+// transposées (variables en lignes -> en colonnes) avant de passer à
+// la sélection de la cible. Le choix appelle un endpoint dédié qui
+// renvoie la liste de colonnes à jour, utilisée ensuite pour peupler
+// le select de la page "target".
+//
+// Contrat attendu (à ajuster si le backend diffère) :
+//   POST /api/job/{job_id}/transpose
+//   form-data: mode = "none" | "force" | "auto"
+//   réponse JSON: { colonnes: [...] }
+// ----------------------------------------------------------------
+
+function afficherCarteTransposition(colonnesInitiales) {
+  state.colonnes = colonnesInitiales;
+
+  const carte = el("transpose-card");
+  carte.hidden = false;
+
+  carte.querySelectorAll("button[data-mode]").forEach((btn) => {
+    btn.onclick = () => choisirTransposition(btn.dataset.mode);
+  });
+}
+
+async function choisirTransposition(mode) {
+  const carte = el("transpose-card");
+  const boutons = carte.querySelectorAll("button[data-mode]");
+  boutons.forEach((b) => (b.disabled = true));
+
+  try {
+    const formData = new FormData();
+    formData.append("mode", mode);
+
+    const reponse = await fetch(`${getApiBase()}/api/job/${state.jobId}/transpose`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!reponse.ok) {
+      const detail = await reponse.json().catch(() => ({}));
+      throw new Error(detail.detail || tr("dataset.error.upload_failed"));
+    }
+    const data = await reponse.json();
+
+    state.colonnes = data.colonnes;
+    carte.hidden = true;
+
+    remplirCiblePossibles(state.colonnes);
+    allerA("target");
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    boutons.forEach((b) => (b.disabled = false));
   }
 }
 

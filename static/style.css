@@ -322,6 +322,11 @@ html, body {
 
 .btn-outline:hover { border-color: var(--blue); color: var(--blue); }
 
+.btn-outline:disabled, .btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* ================================================================
    INFO GRID (dataset info)
    ================================================================ */
@@ -367,6 +372,22 @@ html, body {
 }
 
 .banner-error { background: var(--red-soft); color: #FCA5A5; border: 1px solid var(--red); }
+
+/* ================================================================
+   TRANSPOSITION DES COLONNES (page Dataset)
+   ================================================================ */
+
+.transpose-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 480px) {
+  .transpose-buttons { flex-direction: column; }
+  .transpose-buttons .btn-outline,
+  .transpose-buttons .btn-primary { width: 100%; justify-content: center; }
+}
 
 /* ================================================================
    TARGET PAGE

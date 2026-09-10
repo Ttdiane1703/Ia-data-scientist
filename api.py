@@ -38,6 +38,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import numpy as np
 
+from src.smart_file_analyzer import importer_fichier_intelligent
+
 import man
 
 
@@ -311,14 +313,60 @@ async def upload_fichier(fichier: UploadFile = File(...)):
     # ------------------------------------------------------------
     # CONVERSION VERS CSV STANDARD
     #
+    # Pour CSV/Excel : passe par l'import intelligent (détection de
+    # la vraie ligne d'en-tête, nettoyage du bruit haut/bas,
+    # colonnes vides, en-têtes dupliqués, transposition automatique,
+    # gestion de toutes les feuilles d'un classeur Excel). Le
+    # résultat de cette analyse est conservé pour permettre à
+    # l'utilisateur de changer le choix de transposition ensuite
+    # (voir /api/job/{job_id}/transposition).
+    #
     # Quel que soit le format d'origine, le reste du pipeline et
     # des endpoints d'analyse travaillent uniquement sur
     # jobs/<id>/input.csv.
     # ------------------------------------------------------------
 
+    rapport_structure = None
+
     try:
 
-        df = _lire_fichier_quelconque(chemin_original, extension)
+        if extension in (".csv", ".xlsx", ".xls"):
+
+            resultat_import = importer_fichier_intelligent(
+                chemin_original, mode_transposition="automatique"
+            )
+
+            feuille_principale = resultat_import["feuille_principale"]
+
+            info_feuille = resultat_import["feuilles"][
+                feuille_principale
+            ]
+
+            df = info_feuille["df_propre"]
+
+            rapport_structure = {
+                "n_feuilles": len(resultat_import["feuilles"]),
+                "feuilles_disponibles": list(
+                    resultat_import["feuilles"].keys()
+                ),
+                "feuille_utilisee": feuille_principale,
+                "relations_entre_feuilles": resultat_import[
+                    "relations_entre_feuilles"
+                ],
+                "transformations": info_feuille["rapport"][
+                    "transformations"
+                ],
+                "transposition_effectuee": info_feuille[
+                    "rapport"
+                ].get("transposition_effectuee", False),
+                "mode_transposition": "automatique",
+            }
+
+        else:
+
+            df = _lire_fichier_quelconque(
+                chemin_original, extension
+            )
 
     except Exception as e:
 
@@ -366,6 +414,7 @@ async def upload_fichier(fichier: UploadFile = File(...)):
             "erreur": None,
             "nom_fichier": fichier.filename,
             "format_original": format_detecte,
+            "rapport_structure": rapport_structure,
         }
 
     _sauvegarder_statut(job_id)
@@ -381,6 +430,141 @@ async def upload_fichier(fichier: UploadFile = File(...)):
             .astype(str)
             .to_dict(orient="records")
         ),
+        "structure_fichier": rapport_structure,
+    }
+
+
+# ================================================================
+# 1bis. CHOIX DE LA TRANSPOSITION (OUI / NON / AUTOMATIQUE)
+# ================================================================
+
+@app.post("/api/job/{job_id}/transposition")
+async def choisir_transposition(
+    job_id: str,
+    mode: str = Form(...)
+):
+    """
+    Recharge le fichier ORIGINAL (jamais modifié, conservé depuis
+    l'upload) avec le mode de transposition demandé par
+    l'utilisateur, et régénère input.csv en conséquence.
+
+    mode : "oui" | "non" | "automatique"
+    """
+
+    _verifier_job(job_id)
+
+    mode = (mode or "").strip().lower()
+
+    if mode not in ("oui", "non", "automatique"):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Le paramètre 'mode' doit être 'oui', 'non' ou "
+                   "'automatique'."
+        )
+
+    dossier = _job_dir(job_id)
+
+    fichiers_originaux = sorted(dossier.glob("original_upload.*"))
+
+    if not fichiers_originaux:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Fichier original introuvable pour ce job."
+        )
+
+    chemin_original = str(fichiers_originaux[0])
+
+    extension = os.path.splitext(chemin_original)[1].lower()
+
+    if extension not in (".csv", ".xlsx", ".xls"):
+
+        raise HTTPException(
+            status_code=400,
+            detail="La transposition ne s'applique qu'aux fichiers "
+                   "CSV et Excel."
+        )
+
+    try:
+
+        resultat_import = importer_fichier_intelligent(
+            chemin_original, mode_transposition=mode
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Impossible de retraiter le fichier : {e}"
+        )
+
+    with jobs_lock:
+
+        feuille_precedente = (
+            jobs.get(job_id, {})
+            .get("rapport_structure", {})
+            .get("feuille_utilisee")
+        )
+
+    feuille = (
+        feuille_precedente
+        if feuille_precedente in resultat_import["feuilles"]
+        else resultat_import["feuille_principale"]
+    )
+
+    info_feuille = resultat_import["feuilles"][feuille]
+
+    df = info_feuille["df_propre"]
+
+    if df is None or df.empty:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Aucune donnée exploitable avec ce mode de "
+                "transposition."
+            )
+        )
+
+    chemin_csv = dossier / "input.csv"
+
+    df.to_csv(chemin_csv, index=False, encoding="utf-8")
+
+    rapport_structure = {
+        "n_feuilles": len(resultat_import["feuilles"]),
+        "feuilles_disponibles": list(
+            resultat_import["feuilles"].keys()
+        ),
+        "feuille_utilisee": feuille,
+        "relations_entre_feuilles": resultat_import[
+            "relations_entre_feuilles"
+        ],
+        "transformations": info_feuille["rapport"][
+            "transformations"
+        ],
+        "transposition_effectuee": info_feuille["rapport"].get(
+            "transposition_effectuee", mode == "oui"
+        ),
+        "mode_transposition": mode,
+    }
+
+    with jobs_lock:
+
+        jobs[job_id]["rapport_structure"] = rapport_structure
+
+    _sauvegarder_statut(job_id)
+
+    return {
+        "job_id": job_id,
+        "colonnes": list(df.columns),
+        "apercu": (
+            df.head(5)
+            .fillna("")
+            .astype(str)
+            .to_dict(orient="records")
+        ),
+        "structure_fichier": rapport_structure,
     }
 
 
@@ -413,6 +597,54 @@ def _numero_etape_normalise(etape):
             break
 
     return int(chiffres) if chiffres else 0
+
+
+def _construire_message_erreur_pipeline(resultat, titre_etape):
+    """
+    Construit un message d'erreur clair pour l'utilisateur.
+
+    Quand le pipeline s'est arrêté proprement avec un diagnostic
+    structuré (ex. dataset trop petit détecté à l'étape 5ter), on
+    remonte le VRAI message ("Le dataset contient seulement 5
+    observations pour 3 classes...") plutôt qu'un message
+    générique qui masque la raison réelle de l'arrêt.
+    """
+
+    if isinstance(resultat, dict):
+
+        if resultat.get("raison") == "dataset_trop_petit":
+
+            diagnostic = resultat.get("validation_dataset") or {}
+
+            titre = diagnostic.get(
+                "titre", "⚠️ Dataset trop petit"
+            )
+
+            messages = diagnostic.get("messages", [])
+
+            recommandation = diagnostic.get("recommandation")
+
+            texte = titre
+
+            if messages:
+
+                texte += " — " + " ".join(messages)
+
+            if recommandation:
+
+                texte += f" Recommandation : {recommandation}"
+
+            return texte
+
+        if resultat.get("erreur"):
+
+            return str(resultat["erreur"])
+
+    return (
+        "Le pipeline s'est arrêté avant la fin "
+        f"(dernière étape atteinte : "
+        f"{titre_etape})."
+    )
 
 
 def _executer_job(job_id, target, trials=10, testsize=20):
@@ -459,13 +691,29 @@ def _executer_job(job_id, target, trials=10, testsize=20):
 
             else:
 
+                # Un arrêt propre (ex. dataset trop petit) n'est
+                # pas une panne serveur, mais on garde le statut
+                # "erreur" existant pour rester compatible avec le
+                # frontend actuel : seul le contenu du message
+                # change, pour être précis plutôt que générique.
+
                 jobs[job_id]["statut"] = "erreur"
 
-                jobs[job_id]["erreur"] = (
-                    "Le pipeline s'est arrêté avant la fin "
-                    f"(dernière étape atteinte : "
-                    f"{jobs[job_id].get('titre_etape')})."
+                jobs[job_id]["arret_propre"] = bool(
+                    isinstance(resultat, dict)
+                    and resultat.get("arret_propre")
                 )
+
+                jobs[job_id]["erreur"] = (
+                    _construire_message_erreur_pipeline(
+                        resultat,
+                        jobs[job_id].get("titre_etape")
+                    )
+                )
+
+                if isinstance(resultat, dict):
+
+                    jobs[job_id]["diagnostic"] = resultat
 
         _sauvegarder_statut(job_id)
 

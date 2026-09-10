@@ -220,6 +220,25 @@
         </div>
       </div>
 
+      <!-- ================================================================
+           CHOIX DE TRANSPOSITION
+           Affichée après un upload réussi, avant que la sélection de la
+           cible ne devienne accessible. Les 3 boutons appellent l'endpoint
+           /api/job/{job_id}/transpose (voir app.js) puis rafraîchissent la
+           liste de colonnes du select "target-select".
+           ================================================================ -->
+      <div id="transpose-card" class="card" hidden>
+        <h3 class="card-title" data-i18n="transpose.title">Orientation des colonnes</h3>
+        <p class="muted-text" style="margin-bottom:16px" data-i18n="transpose.subtitle">
+          Vos variables sont-elles organisées en colonnes ou en lignes ? Choisissez comment traiter votre fichier avant de continuer.
+        </p>
+        <div class="transpose-buttons">
+          <button type="button" class="btn-outline" data-mode="none" data-i18n="transpose.none">Ne pas transposer</button>
+          <button type="button" class="btn-outline" data-mode="force" data-i18n="transpose.force">Transposer</button>
+          <button type="button" class="btn-primary" data-mode="auto" data-i18n="transpose.auto">Automatique</button>
+        </div>
+      </div>
+
       <div id="dataset-error" class="banner banner-error" hidden></div>
     </section>
 
